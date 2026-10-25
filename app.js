@@ -35,7 +35,7 @@
   var SHARE_HEAD = { Whole: 1, Half: 0.5, Quarter: 0.25 };
   var BEEF_SHARES = ['Whole', 'Half', 'Quarter', 'Burger'];
   var PORK_SHARES = ['Whole', 'Half', 'Quarter'];
-  var BREED_OPTIONS = ['Angus', 'Red Angus', 'Hereford', 'Mix'];
+  var BREED_OPTIONS = ['Angus', 'Red Angus', 'Hereford'];   // Mix is the button beside the dropdown
 
   // Saved numbers (Settings tab). Key → [label, default, input type]
   var SETTING_DEFAULTS = {
@@ -697,6 +697,7 @@
     users: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
     order: svg('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>'),
     heat: svg('<path d="M12 3c2 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3 0-3-1-5 1-7.5z"/>'),
+    chart: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
     scale: svg('<path d="M12 3v18M5 21h14M4 7h16M7 7l-3 7a3 3 0 0 0 6 0zM17 7l-3 7a3 3 0 0 0 6 0z"/>')
   };
 
@@ -742,23 +743,43 @@
     sales: ['#/sales', 'Sales', I.sales], market: ['#/market', 'Market', I.market], add: ['#/add', 'Add', I.add],
     customers: ['#/customers', 'Customers', I.users], neworder: ['#/order/new', 'New order', I.order],
     logheat: ['#/breeding/new', 'Log heat', I.heat], compare: ['#/compare', 'Compare', I.scale],
+    reports: ['#/reports', 'Reports', I.chart],
     settings: ['#/settings', 'More', I.gear]
   };
   var NAV_DEFAULT = ['herd', 'breeding', 'bulls', 'sales', 'market', 'add'];
-  var NAV_ALL = NAV_DEFAULT.concat(['customers', 'neworder', 'logheat', 'compare']);
+  var NAV_ALL = NAV_DEFAULT.concat(['reports', 'customers', 'neworder', 'logheat', 'compare', 'settings']);
   /** This device's bottom bar (chosen in Settings, saved per device name). */
   function navOrder() {
-    var list = (S.prefs && Array.isArray(S.prefs.nav) ? S.prefs.nav : NAV_DEFAULT).filter(function (k) { return NAV_ITEMS[k] && k !== 'settings'; });
+    var list = (S.prefs && Array.isArray(S.prefs.nav) ? S.prefs.nav : NAV_DEFAULT).filter(function (k) { return NAV_ITEMS[k]; });
     if (!list.length) list = NAV_DEFAULT.slice();
     return list;
   }
   function nav(active) {
     var keys = navOrder();
-    if (NAV_DEFAULT.some(function (k) { return keys.indexOf(k) < 0; })) keys = keys.concat(['settings']);   // hidden pages stay reachable from More
+    // More is only added on its own when there'd be no way to reach Settings (its gear lives on the Herd page)
+    if (keys.indexOf('herd') < 0 && keys.indexOf('settings') < 0) keys = keys.concat(['settings']);
     return '<nav class="nav" aria-label="Main" style="grid-template-columns:repeat(' + keys.length + ', minmax(0, 1fr))">' + keys.map(function (k) {
       var it = NAV_ITEMS[k];
       return '<a href="' + it[0] + '"' + (k === active ? ' class="on" aria-current="page"' : '') + '>' + it[2] + it[1] + '</a>';
     }).join('') + '</nav>';
+  }
+  /** Computer screens: a fixed menu down the left with every page (the bottom bar hides). */
+  var SIDE_GROUPS = [
+    ['', ['herd', 'breeding', 'bulls']],
+    ['Sales', ['sales', 'customers', 'market']],
+    ['Review', ['reports']],
+    ['Quick add', ['add', 'neworder', 'logheat']]
+  ];
+  function sideNav(active) {
+    return '<nav class="side-nav" aria-label="Main menu"><a class="side-brand" href="#/herd"><img src="brand/emblem-color.png" alt="">' +
+      '<span>Musgrove Farms</span></a>' + SIDE_GROUPS.map(function (g) {
+        return '<div class="side-group">' + (g[0] ? '<span class="side-label">' + g[0] + '</span>' : '') + g[1].map(function (k) {
+          var it = NAV_ITEMS[k];
+          var label = k === 'add' ? 'Add animal' : it[1];
+          return '<a href="' + it[0] + '"' + (k === active ? ' class="on" aria-current="page"' : '') + '>' + it[2] + label + '</a>';
+        }).join('') + '</div>';
+      }).join('') +
+      '<div class="side-foot"><a href="#/settings"' + (active === 'settings' ? ' class="on" aria-current="page"' : '') + '>' + I.gear + 'Settings</a></div></nav>';
   }
 
   function bannerHTML() {
@@ -1099,23 +1120,49 @@
   // ==========================================================================
   // Screen: add / edit animal (cattle form, or bull form from the Bulls page)
   // ==========================================================================
-  function breedPicker(current) {
-    var used = [];
-    S.db.Animals.forEach(function (x) { if (x.breed && BREED_OPTIONS.indexOf(x.breed) < 0 && used.indexOf(x.breed) < 0) used.push(x.breed); });
-    var choices = BREED_OPTIONS.concat(used);
-    var picked = current ? (choices.indexOf(current) >= 0 ? current : '__other') : '';
-    return '<fieldset class="field"><legend class="lbl">Breed</legend><div class="opts wrap breeds">' +
-      opts('breed_pick', choices.concat(['__other']), picked, choices.concat(['+ Add your own'])) + '</div>' +
-      '<input class="inp" name="breed_other" data-show-when="breed_pick:__other" value="' + esc(picked === '__other' ? current : '') + '" placeholder="Type the breed"></fieldset>';
+  /** Every breed the dropdown offers: the standard list plus any typed-in breed already used on the farm. */
+  function breedChoices() {
+    var list = BREED_OPTIONS.slice();
+    S.db.Animals.forEach(function (x) {
+      splitBreed(x.breed).forEach(function (p) { if (p && list.indexOf(p) < 0) list.push(p); });
+    });
+    return list;
   }
-  function breedSelect(current) {
-    var used = [];
-    S.db.Animals.forEach(function (x) { if (x.breed && BREED_OPTIONS.indexOf(x.breed) < 0 && used.indexOf(x.breed) < 0) used.push(x.breed); });
-    var choices = BREED_OPTIONS.concat(used);
-    var picked = current ? (choices.indexOf(current) >= 0 ? current : '__other') : '';
-    return '<label class="field"><span class="lbl">Breed</span><select class="inp" name="breed_pick">' +
-      selectOpts(choices.map(function (c) { return { value: c, label: c }; }).concat([{ value: '__other', label: '+ Add your own' }]), picked, 'Choose…') + '</select></label>' +
-      '<input class="inp" name="breed_other" data-show-when="breed_pick:__other" value="' + esc(picked === '__other' ? current : '') + '" placeholder="Type the breed" aria-label="Breed">';
+  /** "Hereford / Angus" → ['Hereford','Angus'] · "Hereford Mix" → ['Hereford',''] · "Mix" → ['',''] */
+  function splitBreed(v) {
+    v = String(v || '').trim();
+    if (!v) return [];
+    if (/^mix(ed)?$/i.test(v)) return ['', ''];
+    if (v.indexOf(' / ') >= 0) return v.split(' / ').map(function (x) { return x.trim(); });
+    var m = v.match(/^(.+?)\s+(mix|cross)$/i);
+    if (m) return [m[1], ''];
+    return [v];
+  }
+  /** Breed: a dropdown, and a Mix button that opens a second dropdown → saved as "Hereford / Angus". */
+  function breedPicker(current) {
+    var choices = breedChoices();
+    var parts = splitBreed(current);
+    var isMix = parts.length > 1;
+    var one = function (name, value, empty) {
+      var picked = value ? (choices.indexOf(value) >= 0 ? value : '__other') : '';
+      return '<select class="inp" name="' + name + '" aria-label="' + (name === 'breed_pick' ? 'Breed' : 'Crossed with') + '">' +
+        selectOpts(choices.map(function (c) { return { value: c, label: c }; }).concat([{ value: '__other', label: '+ Add your own' }]), picked, empty) + '</select>' +
+        '<input class="inp" name="' + name.replace('pick', 'other') + '" data-show-when="' + name + ':__other" value="' + esc(picked === '__other' ? value : '') + '" placeholder="Type the breed" aria-label="Type the breed">';
+    };
+    return '<fieldset class="field breed-field"><legend class="lbl">Breed</legend>' +
+      '<div class="breed-row"><div class="breed-main">' + one('breed_pick', parts[0] || '', isMix ? 'Not sure' : 'Choose…') + '</div>' +
+      '<label class="mix-btn"><input type="checkbox" name="breed_mix" value="yes"' + (isMix ? ' checked' : '') + '><span>Mix</span></label></div>' +
+      '<div class="breed-x" data-show-when="breed_mix:yes"><span class="breed-x-l">Crossed with</span><div class="breed-main">' + one('breed_pick2', parts[1] || '', 'Not sure') + '</div></div>' +
+      '<span class="hint" data-show-when="breed_mix:yes">Saved like “Hereford / Angus”. Leave one as Not sure if you only know half.</span></fieldset>';
+  }
+  /** Turn the form's breed fields back into one value. */
+  function breedFromForm(f) {
+    var get = function (k) { return f['breed_pick' + k] === '__other' ? (f['breed_other' + k] || '') : (f['breed_pick' + k] || ''); };
+    var a = get(''), b = f.breed_mix === 'yes' ? get('2') : null;
+    if (b === null) return a;
+    if (a && b && a !== b) return a + ' / ' + b;
+    if (a || b) return (a || b) + ' Mix';
+    return 'Mix';
   }
   function parentPicker(kind, a) {
     var isDam = kind === 'dam';
@@ -1152,7 +1199,7 @@
       '<input class="inp tag-inp" name="tag" value="' + esc(a.tag) + '" autocomplete="off" autocapitalize="characters" placeholder="None yet"></label>' +
       '<label class="field"><span class="lbl">Name (optional)</span><input class="inp" name="name" value="' + esc(a.name) + '" placeholder="e.g. Daisy"></label></div>' +
       '<span class="hint" style="margin-top:-10px">Leave the tag blank until it’s tagged. If a tag is lost and replaced, just type the new one — the old one is kept.</span>' +
-      (bull ? breedSelect(a.breed) : breedPicker(a.breed));
+      breedPicker(a.breed);
 
     if (bull) {
       html += '<input type="hidden" name="sex" value="Bull"><input type="hidden" name="origin" value="Purchased">' +
@@ -1386,7 +1433,7 @@
     if (!b) return viewNotFound('That breeding record isn’t here anymore.');
     var cow = byId('Animals', b.cow_id) || {};
     var bull = byId('Animals', b.bull_id);
-    var breed = cow.breed && bull && bull.breed ? (cow.breed === bull.breed ? cow.breed : 'Mix') : (cow.breed || '');
+    var breed = cow.breed && bull && bull.breed ? (cow.breed === bull.breed ? cow.breed : splitBreed(cow.breed).length === 1 && splitBreed(bull.breed).length === 1 ? cow.breed + ' / ' + bull.breed : 'Mix') : (cow.breed || '');
     return '<div class="screen">' + formHeader('Record calving', 'f-calve', '#/breeding') +
       '<form id="f-calve" class="form" data-form="calving" data-id="' + esc(b.id) + '" novalidate>' +
       '<div class="info">' + I.info + '<span><strong>' + esc(tagName(cow)) + '</strong> × ' + esc(bullLabel(b)) + ' · ' +
@@ -2178,6 +2225,318 @@
   }
 
   // ==========================================================================
+  // Screen: reports (the desktop dashboard — also works on a phone)
+  // Charts are plain HTML/CSS (bars, columns) plus one SVG line, so text stays
+  // crisp at any width. Every chart has hover/tap details and a table view.
+  // Series colours (validated for colour-blind separation on parchment):
+  //   1 barn red #A71614 · 2 saddle #B27A2C · 3 creek blue #2F6CA3 · 4 pasture #5E8A2E
+  // ==========================================================================
+  var VIZ = ['#A71614', '#B27A2C', '#2F6CA3', '#5E8A2E'];
+
+  function compact(n) {
+    n = Number(n) || 0;
+    var a = Math.abs(n);
+    if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
+    if (a >= 1e3) return (n / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace(/\.0$/, '') + 'K';
+    return String(Math.round(n));
+  }
+  function niceMax(v) {
+    if (v <= 0) return 1;
+    var p = Math.pow(10, Math.floor(Math.log10(v))), m = v / p;
+    return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+  }
+  function monthKeys(n) {
+    var out = [], d = new Date(); d.setDate(1);
+    for (var i = n - 1; i >= 0; i--) { var x = new Date(d.getFullYear(), d.getMonth() - i, 1); out.push(iso(x).slice(0, 7)); }
+    return out;
+  }
+  function monthLabel(k, withYear) {
+    var p = k.split('-'); var d = new Date(+p[0], +p[1] - 1, 1);
+    return d.toLocaleDateString('en-US', withYear ? { month: 'short', year: '2-digit' } : { month: 'short' });
+  }
+  function tableView(head, rows) {
+    return '<details class="viz-table"><summary>Show table</summary><div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      head.map(function (h, i) { return '<th' + (i ? ' class="num"' : '') + '>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      rows.map(function (r) { return '<tr>' + r.map(function (c, i) { return '<td' + (i ? ' class="num"' : '') + '>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') +
+      '</tbody></table></div></details>';
+  }
+  function legend(items) {
+    return '<div class="viz-legend">' + items.map(function (it) {
+      return '<span><i style="background:' + it[1] + '"></i>' + esc(it[0]) + '</span>';
+    }).join('') + '</div>';
+  }
+
+  /** Horizontal bars: [{label, value, tip}] — one colour, value at the tip. */
+  function hbars(items, color, fmt) {
+    fmt = fmt || compact;
+    var max = Math.max.apply(null, items.map(function (i) { return i.value; }).concat([0])) || 1;
+    return '<div class="hbars">' + items.map(function (it) {
+      var pct = it.value / max * 100;
+      return '<div class="hbar" tabindex="0" data-tip="' + esc(it.tip || (it.label + ': ' + fmt(it.value))) + '"><span class="hb-l">' + esc(it.label) + '</span>' +
+        '<span class="hb-track"><span class="hb-fill" style="width:' + (it.value ? Math.max(pct, 1.5) : 0) + '%;background:' + color + '"></span>' +
+        '<span class="hb-v">' + esc(fmt(it.value)) + '</span></span></div>';
+    }).join('') + '</div>';
+  }
+
+  /** Columns by month, optionally stacked: series [{name, color, values[]}] over keys. */
+  function columns(keys, series, fmt, opts) {
+    opts = opts || {};
+    fmt = fmt || compact;
+    var totals = keys.map(function (k, i) { return series.reduce(function (s, se) { return s + (se.values[i] || 0); }, 0); });
+    var top = niceMax(Math.max.apply(null, totals.concat([0])));
+    if (!opts.money && top % 2) top += 1;   // whole-number middle line for head counts
+    var ticks = [top, top / 2, 0];
+    var lastIdx = -1;
+    totals.forEach(function (t, i) { if (t > 0) lastIdx = i; });
+    return '<div class="cols-wrap"><div class="cols-axis">' + ticks.map(function (t) { return '<span>' + esc(opts.money ? '$' + compact(t) : compact(t)) + '</span>'; }).join('') + '</div>' +
+      '<div class="cols"><div class="cols-grid"><i></i><i></i><i></i></div>' + keys.map(function (k, i) {
+        var tip = monthLabel(k, true) + ': ' + series.map(function (se) { return (series.length > 1 ? se.name + ' ' : '') + fmt(se.values[i] || 0); }).join(' · ');
+        return '<div class="col" tabindex="0" data-tip="' + esc(tip) + '"><div class="col-stack" style="height:' + (totals[i] / top * 100) + '%">' +
+          series.map(function (se) {
+            var v = se.values[i] || 0;
+            return v ? '<span class="seg" style="flex:' + v + ' 1 0;background:' + se.color + '"></span>' : '';
+          }).join('') + '</div>' +
+          (i === lastIdx && totals[i] ? '<span class="col-val" style="bottom:calc(' + (totals[i] / top * 100) + '% + 4px)">' + esc(fmt(totals[i])) + '</span>' : '') +
+          '<span class="col-l">' + esc(i % 2 === (keys.length % 2 ? 0 : 1) || keys.length <= 6 ? monthLabel(k, i === 0 || k.slice(5) === '01') : '') + '</span></div>';
+      }).join('') + '</div></div>';
+  }
+
+  /** One-line trend: points [{date, value, tip}] — SVG line + HTML markers so labels stay sharp. */
+  function trendLine(points, fmt) {
+    if (points.length < 2) return '<p class="hint" style="margin:0">Needs at least two sales to draw a trend. It fills in as the farm Sheet saves more sale reports.</p>';
+    var vals = points.map(function (p) { return p.value; });
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var pad = (hi - lo) * 0.15 || hi * 0.1 || 1;
+    lo = Math.max(0, lo - pad); hi = hi + pad;
+    var t0 = parseD(points[0].date).getTime(), t1 = parseD(points[points.length - 1].date).getTime() || t0 + 1;
+    var xy = points.map(function (p) {
+      return { x: (parseD(p.date).getTime() - t0) / ((t1 - t0) || 1) * 100, y: 100 - (p.value - lo) / (hi - lo) * 100, p: p };
+    });
+    var d = xy.map(function (q, i) { return (i ? 'L' : 'M') + q.x.toFixed(2) + ' ' + q.y.toFixed(2); }).join(' ');
+    var last = xy[xy.length - 1];
+    return '<div class="trend"><div class="trend-axis"><span>' + esc(fmt(hi)) + '</span><span>' + esc(fmt((hi + lo) / 2)) + '</span><span>' + esc(fmt(lo)) + '</span></div>' +
+      '<div class="trend-plot"><div class="cols-grid"><i></i><i></i><i></i></div>' +
+      '<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="' + d + ' L100 100 L0 100 Z" fill="' + VIZ[0] + '" opacity=".1" stroke="none"/>' +
+      '<path d="' + d + '" fill="none" stroke="' + VIZ[0] + '" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg>' +
+      xy.map(function (q) {
+        return '<span class="dot" tabindex="0" style="left:' + q.x + '%;top:' + q.y + '%;background:' + VIZ[0] + '" data-tip="' + esc(q.p.tip) + '"></span>';
+      }).join('') +
+      '<span class="trend-end" style="top:' + last.y + '%">' + esc(fmt(last.p.value)) + '</span></div>' +
+      '<div class="trend-x"><span>' + esc(fmtDate(points[0].date, true)) + '</span><span>' + esc(fmtDate(points[points.length - 1].date, true)) + '</span></div></div>';
+  }
+
+  // ---------- data ----------
+  function reportData() {
+    var y = String(new Date().getFullYear());
+    var act = cattle().filter(isActive), bl = bulls().filter(isActive);
+    var makeup = [
+      { label: 'Cows', value: act.filter(function (a) { return a.sex === 'Cow'; }).length },
+      { label: 'Heifers', value: act.filter(function (a) { return a.sex === 'Heifer'; }).length },
+      { label: 'Steers', value: act.filter(function (a) { return a.sex === 'Steer'; }).length },
+      { label: 'Calves', value: act.filter(function (a) { return a.sex === 'Calf'; }).length },
+      { label: 'Bulls', value: bl.length }
+    ];
+    var ages = [['Under 1 yr', 0, 12], ['1–2 yrs', 12, 24], ['2–5 yrs', 24, 60], ['5–8 yrs', 60, 96], ['8+ yrs', 96, 9999]].map(function (b) {
+      return { label: b[0], value: act.concat(bl).filter(function (a) { var m = monthsOld(a.birth_date); return m !== null && m >= b[1] && m < b[2]; }).length };
+    });
+    var unknownAge = act.concat(bl).filter(function (a) { return monthsOld(a.birth_date) === null; }).length;
+    if (unknownAge) ages.push({ label: 'Unknown', value: unknownAge });
+
+    var keys = monthKeys(12);
+    var born = keys.map(function (k) {
+      return S.db.Animals.filter(function (a) { return origin(a) === 'Born on farm' && String(a.birth_date).slice(0, 7) === k; }).length;
+    });
+    var easeNames = ['Unassisted', 'Assisted', 'Hard pull', 'Vet / C-section'];
+    var ease = easeNames.map(function (e) { return { label: e, value: S.db.Calvings.filter(function (c) { return (c.ease || 'Unassisted') === e; }).length }; });
+
+    // Breeding outcome for everything bred/exposed in the last 15 months
+    var cutoff = addDays(today(), -455);
+    var recent = S.db.Breedings.filter(function (b) { return b.result !== 'Heat' && b.result !== 'Superseded' && bredOn(b) >= cutoff; });
+    var outcome = [
+      { label: 'Calved', value: recent.filter(function (b) { return b.result === 'Calved'; }).length },
+      { label: 'Still waiting', value: recent.filter(function (b) { return (b.result || 'Pending') === 'Pending' && !isOverdue(b); }).length },
+      { label: 'Late', value: recent.filter(isOverdue).length },
+      { label: 'Didn’t take', value: recent.filter(function (b) { return b.result === 'Open'; }).length }
+    ];
+    var decided = outcome[0].value + outcome[3].value;
+    var rate = decided ? Math.round(outcome[0].value / decided * 100) : null;
+
+    // Money in by month (deposits on the day they were paid, final payments likewise)
+    var beef = keys.map(function () { return 0; }), pork = keys.map(function () { return 0; });
+    var yearIn = 0;
+    S.db.Orders.forEach(function (o) {
+      var arr = product(o) === 'Pork' ? pork : beef;
+      [[depositPaid(o) ? o.deposit_paid_date : '', num(o.deposit_amount)], [o.final_paid_date, num(o.final_amount)]].forEach(function (pay) {
+        if (!pay[0] || !pay[1]) return;
+        var i = keys.indexOf(String(pay[0]).slice(0, 7));
+        if (i >= 0) arr[i] += pay[1];
+        if (String(pay[0]).slice(0, 4) === y) yearIn += pay[1];
+      });
+    });
+    var held = S.db.Orders.filter(function (o) { return (stage(o) === 'Waiting' || stage(o) === 'Assigned') && depositPaid(o); })
+      .reduce(function (s, o) { return s + num(o.deposit_amount); }, 0);
+    var sup = beefSupply();
+
+    var bullRows = bulls().map(function (b) {
+      var per = periodsFor(b.id);
+      var cows = per.reduce(function (s, p) { return s + periodCows(p); }, 0);
+      var calves = S.db.Animals.filter(function (x) { return x.sire_id === b.id; }).length;
+      var fees = per.reduce(function (s, p) { return s + num(p.fee); }, 0);
+      return { name: dispName(b), seasons: per.length, cows: cows, calves: calves, fees: fees, perCalf: calves && fees ? fees / calves : null };
+    }).filter(function (r) { return r.seasons || r.calves; });
+
+    var custs = customers().sort(function (a, b) { return b.total - a.total; }).slice(0, 8);
+    var calvesThisYear = S.db.Animals.filter(function (a) { return origin(a) === 'Born on farm' && String(a.birth_date).slice(0, 4) === y; }).length;
+
+    return { y: y, act: act, bl: bl, makeup: makeup, ages: ages, keys: keys, born: born, ease: ease, outcome: outcome, rate: rate,
+      beef: beef, pork: pork, yearIn: yearIn, held: held, sup: sup, bullRows: bullRows, custs: custs, calvesThisYear: calvesThisYear };
+  }
+
+  var TREND_CLASSES = [
+    ['steer', 'Steers 500–650 lb', function (it) { return /steer/i.test(it.section + ' ' + it.cls) && /^5\d\d/.test(it.weight || ''); }],
+    ['heifer', 'Heifers 500–650 lb', function (it) { return /heifer/i.test(it.section + ' ' + it.cls) && !/bred/i.test(it.cls || '') && /^5\d\d/.test(it.weight || ''); }],
+    ['cow', 'Slaughter cows (top 50 avg)', function (it) { return /top 50/i.test(it.cls || ''); }]
+  ];
+  function trendPoints(which) {
+    var match = (TREND_CLASSES.find(function (t) { return t[0] === which; }) || TREND_CLASSES[0])[2];
+    return S.db.Prices.filter(function (r) { return /chehalis/i.test(r.yard) && !/special/i.test(r.sale_label || ''); })
+      .sort(function (a, b) { return String(a.sale_date).localeCompare(String(b.sale_date)); })
+      .map(function (r) {
+        var it = priceItems(r).find(match);
+        return it ? { date: r.sale_date, value: mid(it), tip: fmtDate(r.sale_date, true) + ': ' + priceText(it) + '/cwt' } : null;
+      }).filter(Boolean);
+  }
+
+
+  // ---------- herd inventory (sortable, printable) ----------
+  var INV_COLS = [
+    ['tag', 'Tag', function (a) { return a.tag || ''; }],
+    ['name', 'Name', function (a) { return a.name || ''; }],
+    ['breed', 'Breed', function (a) { return a.breed || ''; }],
+    ['sex', 'Type', function (a) { return isBull(a) ? 'Bull' : sexText(a); }],
+    ['age', 'Age', function (a) { return a.birth_date ? ageText(a.birth_date, true) : ''; }, function (a) { return a.birth_date ? -parseD(a.birth_date).getTime() : -Infinity; }],
+    ['status', 'Status', function (a) { return statusLabel(st(a), a).replace(/^[^A-Za-z0-9]+/, ''); }],
+    ['dam', 'Dam', function (a) { var d = a.dam_id && byId('Animals', a.dam_id); return d ? tagName(d) : (a.dam_name || ''); }],
+    ['sire', 'Sire', function (a) { var d = a.sire_id && byId('Animals', a.sire_id); return d ? tagName(d) : (a.sire_name || ''); }]
+  ];
+  function inventoryHTML() {
+    var sort = UI.invSort || 'tag', dir = UI.invDir || 1;
+    var col = INV_COLS.find(function (c) { return c[0] === sort; }) || INV_COLS[0];
+    var key = col[3] || col[2];
+    var rows = cattle().filter(isActive).concat(bulls().filter(isActive)).sort(function (x, y) {
+      var a = key(x), b = key(y);
+      if (a === b) return 0;
+      if (a === '' || a === -Infinity) return 1;
+      if (b === '' || b === -Infinity) return -1;
+      return (typeof a === 'number' ? a - b : String(a).localeCompare(String(b), undefined, { numeric: true })) * dir;
+    });
+    return '<section class="card viz span2 inv"><div class="card-head"><h2 class="sec-title">Herd inventory · ' + rows.length + ' head</h2>' +
+      '<button type="button" class="btn btn-line btn-sm no-print" data-action="print-report">Print</button></div>' +
+      (rows.length ? '<div class="tbl-wrap"><table class="tbl tbl-sort"><thead><tr>' + INV_COLS.map(function (c) {
+        var on = c[0] === sort;
+        return '<th' + (on ? ' aria-sort="' + (dir > 0 ? 'ascending' : 'descending') + '"' : '') + '><button type="button" data-action="inv-sort" data-k="' + c[0] + '">' + c[1] +
+          (on ? (dir > 0 ? ' ▲' : ' ▼') : '') + '</button></th>';
+      }).join('') + '</tr></thead><tbody>' + rows.map(function (a) {
+        return '<tr>' + INV_COLS.map(function (c, i) {
+          var v = c[2](a);
+          return '<td>' + (i === 0 && v ? '<a class="link-inline" href="#/animal/' + esc(a.id) + '">' + esc(v) + '</a>' : esc(v) || '<span class="muted">—</span>') + '</td>';
+        }).join('') + '</tr>';
+      }).join('') + '</tbody></table></div>' : '<p class="hint" style="margin:0">No animals yet.</p>') + '</section>';
+  }
+
+  function viewReports() {
+    var d = reportData();
+    var tile = function (label, value, sub) {
+      return '<div class="tile"><span class="tile-l">' + esc(label) + '</span><b class="tile-v">' + value + '</b>' + (sub ? '<span class="tile-s">' + sub + '</span>' : '') + '</div>';
+    };
+    var pts = trendPoints(UI.trend || 'steer');
+    var moneyFmt = function (v) { return money(v); };
+    var anyMoney = d.beef.concat(d.pork).some(function (v) { return v > 0; });
+
+    return '<div class="screen wide"><header class="hdr"><div class="hdr-titles"><span class="eyebrow">Musgrove Farms</span><h1 class="h1">Reports</h1></div></header>' +
+      '<div id="sync-banner">' + bannerHTML() + '</div>' +
+      '<div class="content reports">' +
+      '<div class="tiles">' +
+      tile('Head in the herd', d.act.length + d.bl.length, d.bl.length ? d.bl.length + ' bull' + (d.bl.length === 1 ? '' : 's') : '') +
+      (function () {
+        var rs = d.act.filter(function (a) { return st(a) === 'Ready steak'; }).length, rb = d.act.filter(function (a) { return st(a) === 'Ready burger'; }).length;
+        return tile('Ready for harvest', rs + rb, '🥩 ' + rs + ' steak · 🍔 ' + rb + ' burger');
+      })() +
+      tile('Calves born ' + d.y, d.calvesThisYear, d.rate !== null ? d.rate + '% of settled breedings calved' : '') +
+      tile('Money in ' + d.y, money(d.yearIn), 'Deposits + final payments') +
+      tile('Deposits held', money(d.held), 'On open orders') +
+      tile('Waitlist', fmtHead(d.sup.steakWanted) + ' head', d.sup.burgerWanted ? lbs(d.sup.burgerWanted) + ' burger' : '') +
+      '</div>' +
+
+      '<div class="rgrid">' +
+      '<section class="card viz"><h2 class="sec-title">Herd makeup</h2>' + hbars(d.makeup, VIZ[0]) +
+      tableView(['Type', 'Head'], d.makeup.map(function (m) { return [m.label, m.value]; })) + '</section>' +
+
+      '<section class="card viz"><h2 class="sec-title">Ages</h2>' + hbars(d.ages, VIZ[2]) +
+      tableView(['Age', 'Head'], d.ages.map(function (m) { return [m.label, m.value]; })) + '</section>' +
+
+      '<section class="card viz span2"><h2 class="sec-title">Calves born — last 12 months</h2>' + columns(d.keys, [{ name: 'Calves', color: VIZ[3], values: d.born }]) +
+      tableView(['Month', 'Calves'], d.keys.map(function (k, i) { return [monthLabel(k, true), d.born[i]]; })) + '</section>' +
+
+      '<section class="card viz"><h2 class="sec-title">Breeding results — last 15 months</h2>' + hbars(d.outcome, VIZ[1]) +
+      (d.rate !== null ? '<p class="hint" style="margin:0"><strong>' + d.rate + '%</strong> of breedings that have settled produced a calf.</p>' : '') +
+      tableView(['Result', 'Breedings'], d.outcome.map(function (m) { return [m.label, m.value]; })) + '</section>' +
+
+      '<section class="card viz"><h2 class="sec-title">Calving ease</h2>' + hbars(d.ease, VIZ[2]) +
+      tableView(['Ease', 'Calvings'], d.ease.map(function (m) { return [m.label, m.value]; })) + '</section>' +
+
+      '<section class="card viz span2"><h2 class="sec-title">Money in — last 12 months</h2>' +
+      (anyMoney ? legend([['Beef', VIZ[0]], ['Pork', VIZ[1]]]) + columns(d.keys, [{ name: 'Beef', color: VIZ[0], values: d.beef }, { name: 'Pork', color: VIZ[1], values: d.pork }], moneyFmt, { money: true })
+        : '<p class="hint" style="margin:0">Nothing paid yet. Deposits and final payments show up here by the month they were paid.</p>') +
+      tableView(['Month', 'Beef', 'Pork'], d.keys.map(function (k, i) { return [monthLabel(k, true), money(d.beef[i]), money(d.pork[i])]; })) + '</section>' +
+
+      '<section class="card viz span2"><div class="card-head"><h2 class="sec-title">Chehalis prices over time</h2>' +
+      '<label class="sr" for="trend-pick">Price class</label><select id="trend-pick" class="inp inp-sm" data-trend>' + TREND_CLASSES.map(function (t) {
+        return '<option value="' + t[0] + '"' + ((UI.trend || 'steer') === t[0] ? ' selected' : '') + '>' + t[1] + '</option>';
+      }).join('') + '</select></div>' +
+      trendLine(pts, function (v) { return '$' + Math.round(v); }) +
+      '<p class="hint" style="margin:0">Middle of each sale’s price range, $/cwt. Regular sales only.</p>' +
+      (pts.length ? tableView(['Sale', '$/cwt (middle)'], pts.map(function (p) { return [fmtDate(p.date, true), '$' + Math.round(p.value)]; })) : '') + '</section>' +
+
+      '<section class="card viz"><h2 class="sec-title">Bulls</h2>' +
+      (d.bullRows.length ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Bull</th><th class="num">Seasons</th><th class="num">Cows</th><th class="num">Calves</th><th class="num">Fees</th><th class="num">Per calf</th></tr></thead><tbody>' +
+        d.bullRows.map(function (r) {
+          return '<tr><td>' + esc(r.name) + '</td><td class="num">' + r.seasons + '</td><td class="num">' + r.cows + '</td><td class="num">' + r.calves + '</td><td class="num">' +
+            (r.fees ? money(r.fees) : '—') + '</td><td class="num">' + (r.perCalf !== null ? money(r.perCalf) : '—') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<p class="hint" style="margin:0">Fills in once bulls have time with the cows and calves are recorded.</p>') + '</section>' +
+
+      '<section class="card viz"><h2 class="sec-title">Top customers</h2>' +
+      (d.custs.length ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Customer</th><th class="num">Orders</th><th class="num">Total</th><th class="num">Last paid</th></tr></thead><tbody>' +
+        d.custs.map(function (c) {
+          return '<tr><td><a class="link-inline" href="#/customer/' + encodeURIComponent(c.key) + '">' + esc([c.first, c.last].filter(Boolean).join(' ') || 'No name') + '</a></td><td class="num">' +
+            c.orders.length + '</td><td class="num">' + money(c.total) + '</td><td class="num">' + esc(fmtDate(c.paid, true)) + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<p class="hint" style="margin:0">Customers appear once an order is paid in full.</p>') + '</section>' +
+      inventoryHTML() +
+      '</div><p class="hint print-only">Printed ' + esc(fmtDate(today(), true)) + ' · Musgrove Farms</p></div>' + nav('reports') + '</div>';
+  }
+
+  // ---------- one floating tooltip for every chart ----------
+  (function () {
+    var tip = null;
+    function show(el) {
+      if (!tip) { tip = document.createElement('div'); tip.className = 'viz-tip'; tip.setAttribute('role', 'status'); document.body.appendChild(tip); }
+      tip.textContent = el.getAttribute('data-tip');
+      var r = el.getBoundingClientRect();
+      tip.style.display = 'block';
+      var w = tip.offsetWidth, x = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+      var yy = r.top - tip.offsetHeight - 8; if (yy < 8) yy = r.bottom + 8;
+      tip.style.left = x + 'px'; tip.style.top = yy + 'px';
+    }
+    function hide() { if (tip) tip.style.display = 'none'; }
+    document.addEventListener('mouseover', function (e) { var el = e.target.closest && e.target.closest('[data-tip]'); if (el) show(el); else hide(); });
+    document.addEventListener('focusin', function (e) { var el = e.target.closest && e.target.closest('[data-tip]'); if (el) show(el); });
+    document.addEventListener('focusout', hide);
+    document.addEventListener('touchstart', function (e) { var el = e.target.closest && e.target.closest('[data-tip]'); if (el) show(el); else hide(); }, { passive: true });
+    window.addEventListener('scroll', hide, { passive: true });
+    window.addEventListener('hashchange', hide);
+  })();
+
+  // ==========================================================================
   // Screen: settings
   // ==========================================================================
   function settingsSyncHTML() {
@@ -2198,7 +2557,7 @@
         (on ? '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="-1" aria-label="Move ' + it[1] + ' earlier"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
           '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="1" aria-label="Move ' + it[1] + ' later"' + (i === order.length - 1 ? ' disabled' : '') + '>↓</button>' : '') + '</div>';
     }).join('');
-    var offBar = NAV_DEFAULT.filter(function (k) { return order.indexOf(k) < 0; }).concat(['customers']).filter(function (k) { return order.indexOf(k) < 0; });
+    var offBar = NAV_ALL.filter(function (k) { return k !== 'settings' && order.indexOf(k) < 0; });
     return '<div class="screen">' + backHeader('Settings', '#/herd') +
       '<div class="content">' +
       '<section class="card"><h2 class="sec-title">Sync</h2><div id="settings-sync">' + settingsSyncHTML() + '</div>' +
@@ -2218,7 +2577,7 @@
       '<section class="card"><h2 class="sec-title">Sign out</h2><p class="hint" style="margin:0;font-size:14px;line-height:1.5">Signs this device out and clears its copy of the herd. The Google Sheet is not touched.</p>' +
       '<button type="button" class="btn btn-danger" data-action="sign-out">Sign out of this device</button></section>' +
       '<section class="card"><h2 class="sec-title">Bottom bar on this device</h2>' +
-      '<p class="hint" style="margin:0;font-size:14px">Tick the pages and shortcuts you want and put them in order. Saved for this device name, so it comes back if you sign in again.</p>' +
+      '<p class="hint" style="margin:0;font-size:14px">Tick the pages and shortcuts you want and put them in order. Saved for this device name, so it comes back if you sign in again. More (this page) is optional — the gear on the Herd page always gets you here.</p>' +
       '<div class="nav-list">' + rows + '</div></section>' +
       (offBar.length ? '<section class="card"><h2 class="sec-title">Pages not on the bar</h2><div class="btn-row wrap">' + offBar.map(function (k) {
         return '<a class="btn btn-line btn-sm" href="' + NAV_ITEMS[k][0] + '">' + NAV_ITEMS[k][2] + NAV_ITEMS[k][1] + '</a>';
@@ -2288,6 +2647,7 @@
         if (p[2] === 'assign') return { html: viewAssign(p[1]) };
         return { html: viewOrderForm(p[1], q), form: true };
       case 'market': return { html: viewMarket(), form: UI.marketView !== 'prices' };
+      case 'reports': return { html: viewReports() };
       case 'settings': return { html: viewSettings() };
       default: return { html: viewHerd() };
     }
@@ -2299,10 +2659,15 @@
       currentIsForm = true;
       return;
     }
+    if (!location.hash && window.matchMedia && matchMedia('(min-width: 1024px)').matches) history.replaceState(null, '', '#/reports');
     var key = location.hash || '#/herd';
     var fresh = key !== currentKey;
     if (fresh) { formPhoto = null; currentKey = key; }
-    var r = route(parseRoute());
+    var pr = parseRoute();
+    var r = route(pr);
+    var SIDE_OF = { animal: 'herd', photo: 'herd', add: 'add', order: pr.p[1] === 'new' ? 'neworder' : 'sales', customer: 'customers', period: 'breeding', compare: 'market' };
+    var side = SIDE_OF[pr.p[0]] || (pr.p[0] === 'breeding' && pr.p[1] === 'new' ? 'logheat' : pr.p[0] || 'herd');
+    r.html += sideNav(side);
     if (fresh && /#lineage$/.test(key)) setTimeout(function () { var l = document.getElementById('lineage'); if (l) l.scrollIntoView({ block: 'start' }); }, 30);
     currentIsForm = !!r.form;
     app.innerHTML = r.html;
@@ -2435,7 +2800,7 @@
       var id = form.dataset.id;
       var existing = id ? byId('Animals', id) : null;
       var bull = form.dataset.bull === '1';
-      var breed = f.breed_pick === '__other' ? (f.breed_other || '') : (f.breed_pick || '');
+      var breed = breedFromForm(f);
       var offsite = !bull && f.origin === 'Purchased' && f.offsite === 'yes';
       var status = f.status;
       if (offsite && ACTIVE.indexOf(status) >= 0 && status !== 'Ready burger') status = 'Ready steak';
@@ -2603,7 +2968,7 @@
       var calfId = uuid();
       var changes = [
         { table: 'Animals', op: 'upsert', row: {
-          id: calfId, tag: f.tag, name: f.name, breed: f.breed_pick === '__other' ? (f.breed_other || '') : (f.breed_pick || ''), sex: 'Calf', calf_sex: f.calf_sex || 'Heifer', birth_date: f.calving_date,
+          id: calfId, tag: f.tag, name: f.name, breed: breedFromForm(f), sex: 'Calf', calf_sex: f.calf_sex || 'Heifer', birth_date: f.calving_date,
           status: alive ? 'In herd' : 'Deceased', origin: 'Born on farm', dam_id: b.cow_id, sire_id: b.bull_id,
           notes: alive ? f.notes : ('Stillborn.' + (f.notes ? ' ' + f.notes : ''))
         } },
@@ -2810,6 +3175,12 @@
       if (!o || !confirm('Delete the order for ' + fullName(o) + '? This can’t be undone. (Cancel keeps it in the archive.)')) return;
       commit([{ table: 'Orders', op: 'delete', row: { id: o.id } }], { go: '#/sales', msg: 'Order deleted' });
     },
+    'inv-sort': function (el) {
+      var k = el.dataset.k;
+      if (UI.invSort === k) UI.invDir = -(UI.invDir || 1); else { UI.invSort = k; UI.invDir = 1; }
+      render();
+    },
+    'print-report': function () { window.print(); },
     'nav-move': function (el) {
       var order = navOrder(), k = el.dataset.k, i = order.indexOf(k), j = i + parseInt(el.dataset.d, 10);
       if (i < 0 || j < 0 || j >= order.length) return;
@@ -2948,6 +3319,7 @@
       savePrefs(); render();
       return;
     }
+    if (t.matches('select[data-trend]')) { UI.trend = t.value; render(); return; }
     if (t.matches('select[data-sort]')) {
       var k = t.dataset.sort === '1' ? 'custSort1' : 'custSort2';
       var dir = /^(paid|total|orders)$/.test(t.value) ? 'desc' : 'asc';
