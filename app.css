@@ -39,7 +39,7 @@
   --danger: #8E1E16;
   --display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
   --head: 'Alfa Slab One', 'Rockwell', 'Georgia', serif;
-  --caps: 'Cinzel', 'Trajan Pro', 'Georgia', serif;
+  --caps: 'Public Sans', system-ui, sans-serif;
   --body: 'Public Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -423,7 +423,7 @@ legend { padding: 0 0 6px; }
 .h1, .form-hdr .h2, .cust-name { font-family: var(--head); font-weight: 400; letter-spacing: .01em; }
 .h1 { font-size: 34px; line-height: 1.05; }
 .form-hdr .h2 { font-size: 21px; }
-.eyebrow, .sec-title, .section-title { font-family: var(--caps); font-weight: 700; letter-spacing: .14em; }
+.eyebrow, .sec-title, .section-title { font-family: var(--body); font-weight: 700; letter-spacing: .1em; }
 .hdr .eyebrow { color: var(--accent); }
 
 /* Headers carry the gold rule from the logo */
@@ -455,3 +455,60 @@ legend { padding: 0 0 6px; }
 
 /* Animal name keeps the slab face with a white outline */
 .hero-id h1.animal-name { font-family: var(--head); color: var(--ink); }
+
+/* ---------- v1.5: parchment theme (matches the sign-in screen) ---------- */
+.hdr, .form-hdr { background: var(--card); color: var(--ink); }
+.hdr .eyebrow { color: var(--accent-ink); }
+.hdr .sync-ind { color: var(--muted); }
+.hdr .icon-btn { background: var(--sunk); color: var(--ink); }
+.form-hdr .link-btn { color: var(--label); }
+.nav { background: var(--card); border-top: 1px solid var(--line); box-shadow: 0 -4px 14px rgba(28, 26, 23, .06); }
+.nav a { color: var(--muted); }
+.nav a.on { color: var(--red); }
+.stat { background: var(--sunk); color: var(--ink); }
+.stat span { color: var(--muted); }
+.stat.emo b, .stat.ready b { color: var(--ink); }
+.stat.emo.on { background: var(--card); border-color: var(--red); }
+.seg-dark { background: var(--sunk); }
+.seg-dark button { color: var(--ink-2); }
+.seg-dark button.on { background: var(--surface); color: var(--on-surface); }
+.card.dark { background: var(--card); color: var(--ink); border: 2px solid var(--accent-line); }
+.card.dark .sec-title { color: var(--label); }
+.card.dark .row-sub, .card.dark .muted { color: var(--muted); }
+.card.dark .progress { background: var(--sunk); }
+.card.dark .progress > div { background: var(--accent); }
+.card.dark .accent-text { color: var(--red); }
+.card.dark .link-inline { color: var(--red); }
+.card .hl, .hl { color: var(--ink); font-weight: 700; }
+.callout { background: var(--sunk); color: var(--ink); }
+.callout svg { color: var(--red); }
+.callout.ok svg { color: var(--herd-ink); }
+.link-inline { color: var(--red); }
+/* Home header: full-colour emblem + Our Herd */
+.home-hdr .brand-row { gap: 12px; }
+.home-hdr .emblem { height: 70px; }
+.home-hdr .h1 { flex: 1; font-size: 30px; white-space: nowrap; margin: 0; }
+/* Animal list: photo on the left, ear tag on the right */
+.thumb.solo { width: 52px; height: 52px; }
+.thumb.solo .ph { width: 52px; height: 52px; }
+.row-end { display: flex; align-items: center; gap: 6px; flex: none; }
+.tag.md { width: 40px; height: 46px; font-size: 18px; box-shadow: 0 2px 6px rgba(28, 26, 23, .18); }
+.tag.md.long { font-size: 14px; }
+.tag.md.xlong { font-size: 11px; }
+.emo-badge.sm { font-size: 24px; width: 30px; }
+.chip-n { font-weight: 700; opacity: .75; }
+/* Breeding page bull controls */
+.bull-ctl { display: flex; align-items: center; gap: 12px; min-height: 56px; border-top: 1px solid var(--line); padding-top: 10px; }
+.bull-ctl:first-of-type { border-top: 0; padding-top: 0; }
+/* Settings: bottom bar editor */
+.nav-list { display: flex; flex-direction: column; gap: 6px; }
+.nav-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 12px; background: var(--base); }
+.nav-row.off { opacity: .6; }
+.nav-check { display: flex; align-items: center; gap: 10px; flex: 1; min-height: 44px; font-weight: 600; cursor: pointer; }
+.nav-check input { width: 22px; height: 22px; accent-color: var(--red); }
+.nav-ico svg { width: 22px; height: 22px; vertical-align: middle; }
+.nav-row .sq-btn { width: 40px; height: 40px; font-size: 18px; }
+.nav-row .sq-btn:disabled { opacity: .35; }
+.btn-row.wrap { flex-wrap: wrap; }
+.btn-row.wrap > .btn { flex: 0 1 auto; }
+.btn svg { color: inherit; }

@@ -1,7 +1,7 @@
 /* Herd Tracker service worker: lets the app open with no signal.
    App files: try the network first (so updates show up), fall back to the saved copy.
    Bump VERSION when you change the list of files below. */
-var VERSION = 'herd-v6';
+var VERSION = 'herd-v8';
 var FONTS = 'herd-fonts';
 var SHELL = [
   './', './index.html', './app.css', './app.js', './config.js', './manifest.webmanifest',
@@ -10,7 +10,9 @@ var SHELL = [
 ];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
+  e.waitUntil(caches.open(VERSION).then(function (c) {
+    return c.addAll(SHELL.map(function (u) { return new Request(u, { cache: 'reload' }); }));
+  }).then(function () { return self.skipWaiting(); }));
 });
 
 self.addEventListener('activate', function (e) {
@@ -31,7 +33,8 @@ function networkFirst(req) {
     var timer = setTimeout(function () {
       fromCache().then(function (r) { if (r && !done) { done = true; resolve(r); } });
     }, 4000);
-    fetch(req).then(function (res) {
+    // Always check with the server for a newer copy (skips the browser's 10-minute cache of GitHub Pages files).
+    fetch(req, { cache: 'no-cache' }).then(function (res) {
       if (res && res.ok) {
         var copy = res.clone();
         caches.open(VERSION).then(function (c) { c.put(req, copy); });

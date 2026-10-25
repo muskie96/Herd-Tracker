@@ -92,7 +92,8 @@
     queue: [],
     lastSync: '',
     who: ls('herd.who'),
-    passcode: ls('herd.passcode'),
+    token: ls('herd.token'),
+    prefs: (function () { try { return JSON.parse(ls('herd.prefs') || 'null') || {}; } catch (e) { return {}; } })(),
     syncing: false,
     offline: false,
     lastError: '',
@@ -141,7 +142,7 @@
     if (!API_URL) return Promise.reject(new Error('The app is missing its server address (config.js).'));
     var ctrl = window.AbortController ? new AbortController() : null;
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, action === 'uploadPhoto' || action === 'refreshPrices' ? 90000 : 25000);
-    var body = Object.assign({ action: action, passcode: S.passcode, who: S.who }, payload || {});
+    var body = Object.assign({ action: action, token: S.token, who: S.who }, payload || {});
     return fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -213,7 +214,7 @@
 
   var syncPromise = null;
   function trySync() {
-    if (!S.passcode) return Promise.resolve(false);
+    if (!S.token) return Promise.resolve(false);
     if (syncPromise) return syncPromise;
     var ok = false;
     S.syncing = true;
@@ -234,8 +235,8 @@
       S.lastError = e.offline ? '' : e.message;
       if (e.code === 'AUTH') {
         S.authFailed = true;
-        S.passcode = '';
-        lsSet('herd.passcode', '');
+        S.token = '';
+        lsSet('herd.token', '');
       }
     }).then(function () {
       S.syncing = false;
@@ -310,7 +311,7 @@
     if (photoMem.has(id)) return Promise.resolve(photoMem.get(id));
     return idb.get('photo:' + id).then(function (p) {
       if (p) return p;
-      if (id.indexOf('local-') === 0 || !S.passcode) return null;
+      if (id.indexOf('local-') === 0 || !S.token) return null;
       return limit(function () { return api('getPhoto', { photo_id: id }); }).then(function (r) {
         var obj = { base64: r.base64, mime: r.mimeType || 'image/jpeg' };
         idb.set('photo:' + id, obj).catch(function () {});
@@ -465,7 +466,7 @@
     return STATUS_INFO[s] ? s : 'In herd';
   }
   function statusLabel(s, a) {
-    if (a && isBull(a) && s === 'In herd') return 'Out of the field';
+    if (a && isBull(a) && s === 'In herd') return 'Active · not with the cows';
     return (STATUS_INFO[s] || STATUS_INFO['In herd']).label;
   }
   function isOffsite(a) { return !!a && a.offsite === 'yes' && !isBull(a); }
@@ -718,17 +719,35 @@
     return parts.join(' · ');
   }
   function animalRow(a) {
-    return '<a class="row" href="#/animal/' + esc(a.id) + '">' + thumb(a) +
+    var s = st(a), info = STATUS_INFO[s] || {};
+    var mark = s === 'In herd' ? '' : info.emoji
+      ? '<span class="emo-badge sm" role="img" aria-label="' + esc(statusLabel(s, a).replace(/^\S+ /, '')) + '">' + info.emoji + '</span>'
+      : '<span class="pill ' + info.pill + '">' + esc(info.short) + '</span>';
+    return '<a class="row" href="#/animal/' + esc(a.id) + '"><span class="thumb solo"><span class="ph"' + (a.photo_id ? ' data-photo="' + esc(a.photo_id) + '"' : '') + '>' +
+      I.camera + '</span></span>' +
       '<span class="row-main"><span class="row-title">' + esc(dispName(a)) + '</span>' +
-      '<span class="row-sub">' + esc(animalSub(a)) + '</span></span>' + statusPill(st(a), a) + '</a>';
+      '<span class="row-sub">' + esc(animalSub(a)) + '</span>' + (mark && !info.emoji ? '<span class="row-sub">' + mark + '</span>' : '') + '</span>' +
+      '<span class="row-end">' + (info.emoji && s !== 'In herd' ? mark : '') + earTag(a.tag, 'md') + '</span></a>';
   }
 
+  var NAV_ITEMS = {
+    herd: ['#/herd', 'Herd', I.herd], breeding: ['#/breeding', 'Breeding', I.cal], bulls: ['#/bulls', 'Bulls', I.bull],
+    sales: ['#/sales', 'Sales', I.sales], market: ['#/market', 'Market', I.market], add: ['#/add', 'Add', I.add],
+    settings: ['#/settings', 'More', I.gear]
+  };
+  var NAV_DEFAULT = ['herd', 'breeding', 'bulls', 'sales', 'market', 'add'];
+  /** This device's bottom bar (chosen in Settings, saved per device name). */
+  function navOrder() {
+    var list = (S.prefs && Array.isArray(S.prefs.nav) ? S.prefs.nav : NAV_DEFAULT).filter(function (k) { return NAV_ITEMS[k] && k !== 'settings'; });
+    if (!list.length) list = NAV_DEFAULT.slice();
+    return list;
+  }
   function nav(active) {
-    var items = [['herd', '#/herd', 'Herd', I.herd], ['breeding', '#/breeding', 'Breeding', I.cal],
-      ['bulls', '#/bulls', 'Bulls', I.bull], ['sales', '#/sales', 'Sales', I.sales], ['market', '#/market', 'Market', I.market],
-      ['add', '#/add', 'Add', I.add]];
-    return '<nav class="nav" aria-label="Main">' + items.map(function (it) {
-      return '<a href="' + it[1] + '"' + (it[0] === active ? ' class="on" aria-current="page"' : '') + '>' + it[3] + it[2] + '</a>';
+    var keys = navOrder();
+    if (keys.length < NAV_DEFAULT.length) keys = keys.concat(['settings']);   // hidden pages stay reachable from More
+    return '<nav class="nav" aria-label="Main" style="grid-template-columns:repeat(' + keys.length + ', minmax(0, 1fr))">' + keys.map(function (k) {
+      var it = NAV_ITEMS[k];
+      return '<a href="' + it[0] + '"' + (k === active ? ' class="on" aria-current="page"' : '') + '>' + it[2] + it[1] + '</a>';
     }).join('') + '</nav>';
   }
 
@@ -796,22 +815,18 @@
   }
 
   // ==========================================================================
-  // Screen: setup (first launch / wrong passcode)
+  // Screen: sign-in (kept deliberately bare — it's the only screen strangers can see)
   // ==========================================================================
   function viewSetup() {
     return '<div class="setup"><form class="setup-inner" data-form="setup" novalidate>' +
       '<img class="setup-emblem" src="brand/emblem-color.png" alt="Musgrove Farms" width="280" height="200">' +
       '<div><h1 class="h1">Herd Tracker</h1></div>' +
-      (S.authFailed
-        ? '<p>The farm passcode was changed. Enter the new one to keep going — nothing on this phone was lost.</p>'
-        : '<p>Connect this phone to the farm’s Google Sheet. You only do this once per phone.</p>') +
-      '<label class="field"><span class="lbl">Who’s using this phone?</span>' +
-      '<input class="inp" name="who" autocomplete="name" placeholder="e.g. Jordan" value="' + esc(S.who) + '" required></label>' +
-      '<label class="field"><span class="lbl">Farm passcode</span>' +
-      '<input class="inp" name="passcode" type="password" autocomplete="current-password" required>' +
-      '<span class="hint">The passcode you set in the Google Sheet’s script.</span></label>' +
+      '<label class="field"><span class="lbl">Device Name:</span>' +
+      '<input class="inp" name="who" autocomplete="off" autocapitalize="words" placeholder="e.g. Shop Phone" value="' + esc(S.who) + '" required></label>' +
+      '<label class="field"><span class="lbl">Access Code</span>' +
+      '<input class="inp" name="passcode" type="password" autocomplete="current-password" required></label>' +
       '<p class="form-err" role="alert"></p>' +
-      '<button class="btn btn-accent btn-block" type="submit">Connect</button></form></div>';
+      '<button class="btn btn-accent btn-block" type="submit">Sign in</button></form></div>';
   }
 
   // ==========================================================================
@@ -820,6 +835,14 @@
   // ==========================================================================
   var HERD_TILES = [['In herd', '🐄', 'In herd'], ['Ready steak', '🥩', 'Ready for steak'], ['Ready burger', '🍔', 'Ready for burger']];
   var HERD_CHIPS = ['All', 'Cows', 'Heifers', 'Steers', 'Calves', 'Offsite', 'Past'];
+  /** Only offer the filters that match something in the herd right now. */
+  function chipCount(c) {
+    if (c === 'Offsite') return offsiteAnimals().length;
+    if (c === 'Past') return cattle().filter(function (a) { return PAST.indexOf(st(a)) >= 0; }).length;
+    var pool = cattle().filter(isActive);
+    if (UI.status && UI.sex !== 'Offsite' && UI.sex !== 'Past') pool = pool.filter(function (a) { return st(a) === UI.status; });
+    return pool.filter(function (a) { return sexMatch(a, c); }).length;
+  }
   function herdPool() {
     if (UI.sex === 'Offsite') return offsiteAnimals();
     if (UI.sex === 'Past') return cattle().filter(function (a) { return PAST.indexOf(st(a)) >= 0; });
@@ -849,15 +872,15 @@
   function viewHerd() {
     var all = cattle();
     var count = function (k) { return all.filter(function (a) { return st(a) === k; }).length; };
+    var chips = HERD_CHIPS.filter(function (c) { return c === 'All' || c === UI.sex || chipCount(c) > 0; });
+    if (chips.indexOf(UI.sex) < 0) UI.sex = 'All';
     var special = UI.sex === 'Offsite' || UI.sex === 'Past';
-    var pool = herdPool();
     var note = UI.sex === 'Offsite' ? 'Bought offsite to go straight to the butcher — not part of the herd'
       : UI.sex === 'Past' ? 'Harvested, sold and deceased'
-      : UI.status ? 'Showing ' + statusLabel(UI.status).replace(/^\S+ /, '').toLowerCase() + ' · tap the box again to show everyone'
-      : 'Everyone in the herd · tap a box above to filter';
+      : UI.status ? 'Showing ' + statusLabel(UI.status).replace(/^\S+ /, '').toLowerCase() + ' · tap the box again to show everyone' : '';
     return '<div class="screen">' +
-      '<header class="hdr"><div class="hdr-row brand-row"><img class="emblem" src="brand/emblem-cream.png" alt="Musgrove Farms" width="94" height="74">' +
-      '<div class="hdr-titles"><span class="eyebrow">Herd Tracker</span><h1 class="h1">The Herd</h1></div>' +
+      '<header class="hdr home-hdr"><div class="hdr-row brand-row"><img class="emblem" src="brand/emblem-color.png" alt="Musgrove Farms" width="98" height="70">' +
+      '<h1 class="h1">Our Herd</h1>' +
       '<div class="hdr-side"><a class="icon-btn" href="#/settings" aria-label="Settings">' + I.gear + '</a>' +
       '<span class="sync-ind" id="sync-ind">' + syncIndHTML() + '</span></div></div>' +
       '<div class="stats three">' + HERD_TILES.map(function (t) {
@@ -868,14 +891,12 @@
       '<div id="sync-banner">' + bannerHTML() + '</div>' +
       '<div class="content">' +
       '<label class="search">' + I.search + '<input id="herd-search" type="search" placeholder="Search tag, old tag, name or breed" aria-label="Search herd" value="' + esc(UI.search) + '"></label>' +
-      '<div class="chips" role="group" aria-label="Filter">' + HERD_CHIPS.map(function (c) {
-        var n = c === 'Offsite' ? offsiteAnimals().length : c === 'Past' ? cattle().filter(function (a) { return PAST.indexOf(st(a)) >= 0; }).length
-          : pool.filter(function (a) { return sexMatch(a, c); }).length;
-        var show = UI.sex === c || c === 'All' || c === 'Offsite' || c === 'Past';
+      (chips.length > 1 ? '<div class="chips" role="group" aria-label="Filter">' + chips.map(function (c) {
+        var n = c === 'All' ? (special ? '' : herdPool().length) : chipCount(c);
         return '<button type="button" class="chip' + (UI.sex === c ? ' on' : '') + (c === 'Offsite' || c === 'Past' ? ' chip-alt' : '') +
-          '" data-action="sex-filter" data-v="' + c + '">' + c + (show && !(c === 'All' && special) ? ' ' + n : '') + '</button>';
-      }).join('') + '</div>' +
-      '<span class="list-note">' + esc(note) + '</span>' +
+          '" data-action="sex-filter" data-v="' + c + '">' + c + (n !== '' ? ' <span class="chip-n">' + n + '</span>' : '') + '</button>';
+      }).join('') + '</div>' : '') +
+      (note ? '<span class="list-note">' + esc(note) + '</span>' : '') +
       '<div class="list" id="herd-list">' + herdListHTML() + '</div></div>' + nav('herd') + '</div>';
   }
 
@@ -909,11 +930,13 @@
       '<div class="content" style="padding-top:20px">' +
       (offsite ? '<div class="info">' + I.info + '<span><strong>Offsite purchase.</strong> Bought to go straight to the butcher — not counted in the herd, but you can assign it to waitlist orders.</span></div>' : '') +
 
-      '<section class="field"><h2 class="sec-title">Status</h2><div class="status-grid">' + statusChoices(a).map(function (s) {
+      (bull ? '<div class="info">' + I.bull + '<span><strong>' + esc(statusLabel(st(a), a)) + '.</strong> ' +
+        (st(a) === 'With cows' || isActive(a) ? 'Put him in with the cows or take him out from the <a class="link-inline" href="#/breeding">Breeding page</a>.' : '') + '</span></div>'
+      : '<section class="field"><h2 class="sec-title">Status</h2><div class="status-grid">' + statusChoices(a).map(function (s) {
         var on = st(a) === s;
         return '<button type="button" class="' + STATUS_INFO[s].btn + (on ? ' on' : '') + '" aria-pressed="' + on + '" data-action="set-status" data-id="' + esc(a.id) + '" data-v="' + esc(s) + '">' +
           (on ? I.check : '') + esc(statusLabel(s, a)) + '</button>';
-      }).join('') + '</div></section>';
+      }).join('') + '</div></section>');
 
     html += harvestCard(a);
 
@@ -938,7 +961,7 @@
         '</div></section>';
     }
 
-    html += ivermectinCard(a);
+    if (!bull) html += ivermectinCard(a);
     html += photosCard(a, photos);
 
     if (canBreed(a)) html += femaleBreedingCard(a);
@@ -1043,7 +1066,7 @@
       var h = nextHeat(a.id);
       return '<section class="card dark"><div class="card-head"><h2 class="sec-title">Breeding</h2><span class="pill p-harv">Open</span></div>' +
         '<span class="muted" style="font-size:14px">Not bred right now · ' + esc(lastLine) + '</span>' +
-        (h ? '<span class="muted" style="font-size:14px">Next heat ≈ <strong style="color:var(--accent)">' + esc(fmtDate(h.next)) + '</strong> (21-day cycle from ' + esc(fmtDate(h.last)) + ')</span>' : '') +
+        (h ? '<span class="muted" style="font-size:14px">Next heat ≈ <strong class="hl">' + esc(fmtDate(h.next)) + '</strong> (21-day cycle from ' + esc(fmtDate(h.last)) + ')</span>' : '') +
         (isActive(a) ? '<a class="btn btn-accent" href="#/breeding/new?cow=' + esc(a.id) + '">' + I.plus + 'Log heat or breeding</a>' : '') + '</section>';
     }
     var exposure = isExposure(b);
@@ -1053,15 +1076,15 @@
     var over = isOverdue(b);
     return '<section class="card dark"><div class="card-head"><h2 class="sec-title">Breeding</h2><span class="pill ' + (over ? 'p-dead' : 'p-accent') + '">' + (over ? 'Overdue' : exposure ? 'Exposed' : 'Bred') + '</span></div>' +
       '<span class="muted" style="font-size:14px">' + (exposure
-        ? 'In with <strong style="color:var(--on-surface)">' + esc(bullLabel(b)) + '</strong> ' + esc(fmtDate(b.exposure_start, true)) + (b.exposure_end ? ' – ' + esc(fmtDate(b.exposure_end, true)) : ' – still in')
-        : 'Bred to <strong style="color:var(--on-surface)">' + esc(bullLabel(b)) + '</strong> on ' + esc(fmtDate(b.bred_date, true))) + '</span>' +
+        ? 'In with <strong class="hl">' + esc(bullLabel(b)) + '</strong> ' + esc(fmtDate(b.exposure_start, true)) + (b.exposure_end ? ' – ' + esc(fmtDate(b.exposure_end, true)) : ' – still in')
+        : 'Bred to <strong class="hl">' + esc(bullLabel(b)) + '</strong> on ' + esc(fmtDate(b.bred_date, true))) + '</span>' +
       '<span class="muted" style="font-size:14px">' + (exposure ? 'Calving window' : 'Expected calving') + '</span>' +
       '<span class="big-num accent-text"' + (exposure ? ' style="font-size:26px"' : '') + '>' + esc(dueText(b, true)) + '</span>' +
       '<div class="progress"><div style="width:' + pct + '%"></div></div>' +
       '<span class="muted" style="font-size:12px">' + (over ? 'Window passed ' + daysBetween(dueEnd(b), today()) + ' days ago — record the calf or mark didn’t take'
         : elapsed + ' of ~' + GESTATION_DAYS + ' days' + (exposure ? ' since he went in' : '')) + ' · ' + esc(lastLine) + '</span>' +
       '<div class="btn-row"><a class="btn btn-accent" href="#/breeding/' + esc(b.id) + '/calve">Record calving</a>' +
-      '<button type="button" class="btn btn-line" style="color:var(--on-surface);border-color:var(--on-surface-muted)" data-action="mark-open" data-id="' + esc(b.id) + '">Didn’t take</button></div></section>';
+      '<button type="button" class="btn btn-line" data-action="mark-open" data-id="' + esc(b.id) + '">Didn’t take</button></div></section>';
   }
 
   // ==========================================================================
@@ -1075,6 +1098,15 @@
     return '<fieldset class="field"><legend class="lbl">Breed</legend><div class="opts wrap breeds">' +
       opts('breed_pick', choices.concat(['__other']), picked, choices.concat(['+ Add your own'])) + '</div>' +
       '<input class="inp" name="breed_other" data-show-when="breed_pick:__other" value="' + esc(picked === '__other' ? current : '') + '" placeholder="Type the breed"></fieldset>';
+  }
+  function breedSelect(current) {
+    var used = [];
+    S.db.Animals.forEach(function (x) { if (x.breed && BREED_OPTIONS.indexOf(x.breed) < 0 && used.indexOf(x.breed) < 0) used.push(x.breed); });
+    var choices = BREED_OPTIONS.concat(used);
+    var picked = current ? (choices.indexOf(current) >= 0 ? current : '__other') : '';
+    return '<label class="field"><span class="lbl">Breed</span><select class="inp" name="breed_pick">' +
+      selectOpts(choices.map(function (c) { return { value: c, label: c }; }).concat([{ value: '__other', label: '+ Add your own' }]), picked, 'Choose…') + '</select></label>' +
+      '<input class="inp" name="breed_other" data-show-when="breed_pick:__other" value="' + esc(picked === '__other' ? current : '') + '" placeholder="Type the breed" aria-label="Breed">';
   }
   function parentPicker(kind, a) {
     var isDam = kind === 'dam';
@@ -1111,18 +1143,13 @@
       '<input class="inp tag-inp" name="tag" value="' + esc(a.tag) + '" autocomplete="off" autocapitalize="characters" placeholder="None yet"></label>' +
       '<label class="field"><span class="lbl">Name (optional)</span><input class="inp" name="name" value="' + esc(a.name) + '" placeholder="e.g. Daisy"></label></div>' +
       '<span class="hint" style="margin-top:-10px">Leave the tag blank until it’s tagged. If a tag is lost and replaced, just type the new one — the old one is kept.</span>' +
-      breedPicker(a.breed);
+      (bull ? breedSelect(a.breed) : breedPicker(a.breed));
 
     if (bull) {
       html += '<input type="hidden" name="sex" value="Bull"><input type="hidden" name="origin" value="Purchased">' +
         '<label class="field"><span class="lbl">Status</span><select class="inp" name="status">' +
-        selectOpts(BULL_STATUSES.filter(function (s) { return s !== 'With cows' || withCows; }).map(function (s) { return { value: s, label: statusLabel(s, a) }; }), st(a)) + '</select>' +
-        '<span class="hint">Put him in or take him out with the 🐂 buttons on his profile — that logs his dates.</span></label>';
-      if (!id) {
-        html += '<label class="check"><input type="checkbox" name="in_now" value="yes"><span>He’s in with the cows now</span></label>' +
-          '<div class="grid-2" data-show-when="in_now:yes">' + dateField('start_date', 'Went in on', today(), { max: today() }) +
-          moneyField('fee', 'Season fee', '', 'Lease / service cost') + '</div>';
-      }
+        selectOpts(['In herd', 'Sold', 'Deceased', 'Harvested'].concat(withCows ? ['With cows'] : []).map(function (s) { return { value: s, label: s === 'In herd' ? 'Active' : statusLabel(s, a) }; }), st(a) === 'Ready burger' ? 'In herd' : st(a)) + '</select>' +
+        '<span class="hint">Putting him in with the cows and taking him out is done from the Breeding page.</span></label>';
       if (withCows) {
         html += '<div data-show-when="status:In herd|Ready burger|Harvested|Sold|Deceased">' + dateField('end_date', 'Came out on', today(), { max: today() }) + '</div>';
       }
@@ -1147,7 +1174,7 @@
         '<span class="hint" data-show-when="offsite:yes">Offsite animals start as 🥩 Ready – Steak unless you pick 🍔.</span></label>';
     }
 
-    if (!id) {
+    if (!id && !bull) {
       html += '<section class="card"><h2 class="sec-title">Last ivermectin</h2><div class="grid-2">' +
         dateField('iver_date', 'Date given', '', { max: today() }) +
         '<label class="field"><span class="lbl">Dose</span><input class="inp" name="iver_dose" placeholder="e.g. 10 ml"></label></div>' +
@@ -1298,18 +1325,27 @@
       }).join('') : '<div class="empty"><b>No open cows</b>Every cow and heifer old enough is bred or in with a bull.</div>';
     } else {
       var list = UI.breedTab === 'bred' ? pend : UI.breedTab === 'overdue' ? overdue : due;
-      var emptyMsg = UI.breedTab === 'bred' ? ['No cows bred yet', 'Put a bull in with the cows from the Bulls page, or log a breeding with the yellow button.']
+      var emptyMsg = UI.breedTab === 'bred' ? ['No cows bred yet', 'Put a bull in with the cows from the Bulls page, or log a breeding with the red button.']
         : UI.breedTab === 'overdue' ? ['Nobody is late', 'Cows show up here when their calving window has passed by ' + OVERDUE_GRACE + ' days with no calf recorded.']
-        : ['Nobody due in the next ' + DUE_SOON_DAYS + ' days', 'Log a breeding with the yellow button.'];
+        : ['Nobody due in the next ' + DUE_SOON_DAYS + ' days', 'Log a breeding with the red button.'];
       body = list.length ? list.map(breedingCard).join('') : '<div class="empty"><b>' + emptyMsg[0] + '</b>' + emptyMsg[1] + '</div>';
     }
+    var bullRows = bulls().filter(isActive).sort(byTag).map(function (a) {
+      var op = openPeriod(a.id), last = periodsFor(a.id)[0];
+      return '<div class="bull-ctl">' + earTag(a.tag, 'sm') + '<span class="row-main"><span class="row-title">' + esc(dispName(a)) + '</span>' +
+        '<span class="row-sub">' + esc(op ? '🐂 In with the cows since ' + fmtDate(op.start_date) : last && last.end_date ? 'Out since ' + fmtDate(last.end_date, true) : 'Not in yet') + '</span></span>' +
+        (op ? '<a class="btn btn-dark btn-sm" href="#/animal/' + esc(a.id) + '/period?to=In%20herd">Take out</a>'
+          : '<a class="btn btn-accent btn-sm" href="#/animal/' + esc(a.id) + '/period">Put in</a>') + '</div>';
+    }).join('');
+    var bullCard = '<section class="card bulls-card"><div class="card-head"><h2 class="sec-title">Bulls</h2><a class="link-inline" href="#/bulls">All bulls</a></div>' +
+      (bullRows || '<p class="hint" style="margin:0">No bulls yet. <a class="link-inline" href="#/bulls/add">Add one</a> to put him in with the cows.</p>') + '</section>';
     return '<div class="screen"><header class="hdr"><div class="hdr-titles"><span class="eyebrow">Season ' + new Date().getFullYear() +
       '</span><h1 class="h1">Breeding &amp; Calving</h1></div>' +
       '<div class="seg-dark tight" role="group" aria-label="Breeding views">' + tabs.map(function (tb) {
         return '<button type="button" class="' + (UI.breedTab === tb[0] ? 'on' : '') + '" aria-pressed="' + (UI.breedTab === tb[0]) + '" data-action="breed-tab" data-v="' + tb[0] + '">' + tb[1] + '</button>';
       }).join('') + '</div></header>' +
       '<div id="sync-banner">' + bannerHTML() + '</div>' +
-      '<div class="content"><div class="list">' + body + '</div><div style="height:64px"></div></div>' +
+      '<div class="content">' + bullCard + '<div class="list">' + body + '</div><div style="height:64px"></div></div>' +
       '<a class="fab" href="#/breeding/new">' + I.plus + 'Log heat / breeding</a>' + nav('breeding') + '</div>';
   }
 
@@ -1398,8 +1434,7 @@
     var list = periodsFor(a.id);
     var open = openPeriod(a.id);
     return '<section class="card"><div class="card-head"><h2 class="sec-title">In with the cows</h2>' +
-      (open ? '<a class="btn btn-dark btn-sm" href="#/animal/' + esc(a.id) + '/period?to=In%20herd">Take him out</a>'
-        : (isActive(a) ? '<a class="btn btn-accent btn-sm" href="#/animal/' + esc(a.id) + '/period">🐂 Put him in</a>' : '')) + '</div>' +
+      (isActive(a) ? '<a class="link-inline" href="#/breeding">Breeding page</a>' : '') + '</div>' +
       (list.length ? '<div class="sub-list">' + list.map(function (p) {
         var calves = periodCalves(p), cowsN = periodCows(p), fee = num(p.fee);
         var sub = [cowsN + (cowsN === 1 ? ' cow' : ' cows'), calves + (calves === 1 ? ' calf' : ' calves')];
@@ -1442,7 +1477,7 @@
     var op = openPeriod(a.id);
     if (!q.to) {
       var cows = exposableCows();
-      return '<div class="screen">' + formHeader('Put ' + dispName(a) + ' in', 'f-period', '#/animal/' + esc(a.id)) +
+      return '<div class="screen">' + formHeader('Put ' + dispName(a) + ' in', 'f-period', '#/breeding') +
         '<form id="f-period" class="form" data-form="period-start" data-id="' + esc(a.id) + '" novalidate>' +
         dateField('start_date', 'Went in with the cows on *', today(), { max: today(), todayBtn: true }) +
         moneyField('fee', 'Season fee', '', 'Lease, rental or service cost for this stretch — shows up as cost per calf.') +
@@ -1454,7 +1489,7 @@
     }
     var to = q.to;
     var n = op ? S.db.Breedings.filter(function (b) { return b.period_id === op.id && (b.result || 'Pending') === 'Pending'; }).length : 0;
-    return '<div class="screen">' + formHeader('Take ' + dispName(a) + ' out', 'f-period', '#/animal/' + esc(a.id)) +
+    return '<div class="screen">' + formHeader('Take ' + dispName(a) + ' out', 'f-period', '#/breeding') +
       '<form id="f-period" class="form" data-form="period-end" data-id="' + esc(a.id) + '" data-to="' + esc(to) + '" novalidate>' +
       '<div class="info">' + I.info + '<span>In since <strong>' + esc(op ? fmtDate(op.start_date, true) : '—') + '</strong>' +
       (n ? ' · closes the calving window for ' + n + (n === 1 ? ' cow' : ' cows') : '') + '. New status: <strong>' + esc(statusLabel(to, a)) + '</strong></span></div>' +
@@ -1841,8 +1876,12 @@
       !(/\bbull/i.test(it.cls || '') && !/\bcows?\b/i.test(it.cls || ''));
     return true;
   }
+  var DAIRY_RE = /\b(dairy|holsteins?|jerseys?|springers?|fresh cows?|hol)\b/i;
   function priceItems(rec) {
-    try { var a = JSON.parse(rec.lines_json || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+    try {
+      var a = JSON.parse(rec.lines_json || '[]');
+      return Array.isArray(a) ? a.filter(function (it) { return !DAIRY_RE.test((it.section || '') + ' ' + (it.cls || '')); }) : [];
+    } catch (e) { return []; }
   }
   function pmoney(x) {
     var n = Number(x);
@@ -2135,20 +2174,56 @@
       (S.lastError ? '<p class="form-err" style="margin:0">' + esc(S.lastError) + '</p>' : '');
   }
   function viewSettings() {
+    var order = navOrder();
+    var hidden = NAV_DEFAULT.filter(function (k) { return order.indexOf(k) < 0; });
+    var rows = order.concat(hidden).map(function (k, i) {
+      var on = order.indexOf(k) >= 0, it = NAV_ITEMS[k];
+      return '<div class="nav-row' + (on ? '' : ' off') + '"><label class="nav-check"><input type="checkbox" data-nav-toggle="' + k + '"' + (on ? ' checked' : '') +
+        (on && order.length <= 3 ? ' disabled' : '') + '><span class="nav-ico">' + it[2] + '</span>' + it[1] + '</label>' +
+        (on ? '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="-1" aria-label="Move ' + it[1] + ' left"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+          '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="1" aria-label="Move ' + it[1] + ' right"' + (i === order.length - 1 ? ' disabled' : '') + '>↓</button>' : '') + '</div>';
+    }).join('');
     return '<div class="screen">' + backHeader('Settings', '#/herd') +
       '<div class="content">' +
+      (hidden.length ? '<section class="card"><h2 class="sec-title">Other pages</h2><div class="btn-row wrap">' + hidden.map(function (k) {
+        return '<a class="btn btn-line btn-sm" href="' + NAV_ITEMS[k][0] + '">' + NAV_ITEMS[k][2] + NAV_ITEMS[k][1] + '</a>';
+      }).join('') + '</div></section>' : '') +
+      '<section class="card"><h2 class="sec-title">Bottom bar on this device</h2>' +
+      '<p class="hint" style="margin:0;font-size:14px">Tick the pages you want and put them in order. Saved for this device name, so it comes back if you sign in again.</p>' +
+      '<div class="nav-list">' + rows + '</div></section>' +
       '<section class="card"><h2 class="sec-title">Sync</h2><div id="settings-sync">' + settingsSyncHTML() + '</div>' +
       '<button type="button" class="btn btn-dark" data-action="sync">' + I.sync + 'Sync now</button></section>' +
-      '<form class="card" data-form="who" novalidate><h2 class="sec-title">This phone</h2>' +
-      '<label class="field"><span class="lbl">Your name (shown as who made each change)</span><input class="inp" name="who" value="' + esc(S.who) + '" required></label>' +
+      '<form class="card" data-form="who" novalidate><h2 class="sec-title">This device</h2>' +
+      '<label class="field"><span class="lbl">Device name (shown as who made each change)</span><input class="inp" name="who" value="' + esc(S.who) + '" required></label>' +
       '<button type="submit" class="btn btn-line">Save name</button></form>' +
+      '<section class="card"><h2 class="sec-title">Signed-in devices</h2><div id="device-list">' + (UI.devices ? devicesHTML(UI.devices) : '<p class="hint" style="margin:0">Loading…</p>') + '</div>' +
+      '<p class="hint" style="margin:0">Remove any device you don’t recognize. To sign everyone out, change the access code in the Sheet’s script and deploy a new version.</p></section>' +
       '<section class="card"><h2 class="sec-title">Prices &amp; butcher</h2><p class="hint" style="margin:0;font-size:14px">Haul cost, your prices, deposits and the butcher’s rates live on the Market tab under Our numbers.</p>' +
       '<a class="btn btn-line" href="#/market" data-action="market-view" data-v="numbers">Open Our numbers</a></section>' +
       '<section class="card"><h2 class="sec-title">Install tips</h2>' +
       '<p class="hint" style="margin:0;font-size:14px;line-height:1.5"><strong>iPhone:</strong> open in Safari → Share → Add to Home Screen.<br><strong>Android:</strong> open in Chrome → ⋮ menu → Add to Home screen (or Install app).</p></section>' +
-      '<section class="card"><h2 class="sec-title">Sign out</h2><p class="hint" style="margin:0;font-size:14px;line-height:1.5">Disconnects this phone and clears its copy of the herd. The Google Sheet is not touched.</p>' +
-      '<button type="button" class="btn btn-danger" data-action="sign-out">Sign out of this phone</button></section>' +
-      '<p class="updated">Herd Tracker ' + esc(VERSION) + '</p></div>' + nav('') + '</div>';
+      '<section class="card"><h2 class="sec-title">Sign out</h2><p class="hint" style="margin:0;font-size:14px;line-height:1.5">Signs this device out and clears its copy of the herd. The Google Sheet is not touched.</p>' +
+      '<button type="button" class="btn btn-danger" data-action="sign-out">Sign out of this device</button></section>' +
+      '<p class="updated">Herd Tracker ' + esc(VERSION) + '</p></div>' + nav('settings') + '</div>';
+  }
+  function devicesHTML(list) {
+    if (!list || !list.length) return '<p class="hint" style="margin:0">No devices found.</p>';
+    return '<div class="sub-list">' + list.map(function (d) {
+      return '<span class="li"><span><strong>' + esc(d.name) + '</strong>' + (d.me ? ' <span class="pill p-herd">This device</span>' : '') +
+        '<br><span class="hint">Signed in ' + esc(fmtDate(localDateOf(d.created), true)) + ' · last used ' + esc(relTime(d.seen)) + '</span></span>' +
+        (d.me ? '' : '<button type="button" class="btn btn-danger btn-sm" data-action="revoke-device" data-id="' + esc(d.id) + '" data-name="' + esc(d.name) + '">Remove</button>') + '</span>';
+    }).join('') + '</div>';
+  }
+  function loadDevices() {
+    var box = document.getElementById('device-list');
+    if (!box) return;
+    api('devices').then(function (r) { UI.devices = r.devices; if (box.isConnected) box.innerHTML = devicesHTML(r.devices); },
+      function (e) { if (box.isConnected) box.innerHTML = '<p class="hint" style="margin:0">' + esc(e.offline ? 'Needs signal to load.' : e.message) + '</p>'; });
+  }
+  function savePrefs(msg) {
+    lsSet('herd.prefs', JSON.stringify(S.prefs));
+    api('savePrefs', { prefs: S.prefs }).catch(function () { /* kept on this device; saved next time */ });
+    if (msg) toast(msg);
   }
 
   function viewNotFound(msg) {
@@ -2198,7 +2273,7 @@
   }
   function render() {
     var app = document.getElementById('app');
-    if (!S.passcode) {
+    if (!S.token) {
       if (currentKey !== '__setup') { app.innerHTML = viewSetup(); currentKey = '__setup'; }
       currentIsForm = true;
       return;
@@ -2234,6 +2309,7 @@
   }
   function afterRender(fresh) {
     hydratePhotos();
+    if (fresh && parseRoute().p[0] === 'settings') loadDevices();
     document.querySelectorAll('form[data-form]').forEach(function (f) { onFormInput(f, null); });
     if (fresh && parseRoute().q.pay) {
       var pay = document.getElementById('payments');
@@ -2307,31 +2383,29 @@
   var forms = {
     setup: function (form) {
       var f = fields(form);
-      if (!f.who) return formError(form, 'Enter your name.');
-      if (!f.passcode) return formError(form, 'Enter the farm passcode.');
+      if (!f.who) return formError(form, 'Enter a device name.');
+      if (!f.passcode) return formError(form, 'Enter the access code.');
       var btn = form.querySelector('button[type=submit]');
-      btn.disabled = true; btn.textContent = 'Connecting…';
-      S.passcode = f.passcode; S.who = f.who;
-      return api('ping').then(function () {
-        lsSet('herd.passcode', f.passcode);
-        lsSet('herd.who', f.who);
-        S.authFailed = false;
+      btn.disabled = true; btn.textContent = 'Signing in…';
+      S.who = f.who;
+      return api('login', { passcode: f.passcode }).then(function (res) {
+        signedIn(res);
         currentKey = null;
         location.hash = '#/herd';
         render();
         return trySync();
       }, function (e) {
-        S.passcode = '';
-        btn.disabled = false; btn.textContent = 'Connect';
-        formError(form, e.code === 'AUTH' ? 'That passcode didn’t work. Check it and try again.'
-          : e.offline ? 'Can’t reach the farm’s Sheet. Check your signal and try again.' : e.message);
+        btn.disabled = false; btn.textContent = 'Sign in';
+        formError(form, e.code === 'AUTH' || e.code === 'LOCKED' ? e.message
+          : e.offline ? 'Can’t connect. Check your signal and try again.' : e.message);
       });
     },
 
     who: function (form) {
       var f = fields(form);
-      if (!f.who) return formError(form, 'Enter your name.');
+      if (!f.who) return formError(form, 'Enter a device name.');
       S.who = f.who; lsSet('herd.who', f.who);
+      api('savePrefs', { prefs: S.prefs }).then(loadDevices, function () {});
       toast('Name saved');
     },
 
@@ -2399,7 +2473,7 @@
       if (f.fee && !hasNum(f.fee)) return formError(form, 'The season fee should be a number.');
       var ch = [{ table: 'Animals', op: 'upsert', row: { id: a.id, status: 'With cows' } }].concat(periodStartChanges(a, f.start_date, f.fee, f.notes));
       var n = ch.filter(function (c) { return c.table === 'Breedings'; }).length;
-      return commit(ch, { go: '#/animal/' + a.id, msg: dispName(a) + ' is in · ' + n + (n === 1 ? ' cow' : ' cows') + ' exposed' });
+      return commit(ch, { go: '#/breeding', msg: dispName(a) + ' is in · ' + n + (n === 1 ? ' cow' : ' cows') + ' exposed' });
     },
 
     'period-end': function (form) {
@@ -2412,7 +2486,7 @@
       var to = form.dataset.to || 'In herd';
       var row = { id: a.id, status: to };
       if (to === 'Harvested') row.harvest_for = 'Burger';
-      var go = to === 'Harvested' || to === 'Sold' ? '#/animal/' + a.id + '/harvest' : '#/animal/' + a.id;
+      var go = to === 'Harvested' || to === 'Sold' ? '#/animal/' + a.id + '/harvest' : '#/breeding';
       return commit([{ table: 'Animals', op: 'upsert', row: row }].concat(periodEndChanges(a, f.end_date)), { go: go, msg: dispName(a) + ' is out' });
     },
 
@@ -2715,11 +2789,25 @@
       if (!o || !confirm('Delete the order for ' + fullName(o) + '? This can’t be undone. (Cancel keeps it in the archive.)')) return;
       commit([{ table: 'Orders', op: 'delete', row: { id: o.id } }], { go: '#/sales', msg: 'Order deleted' });
     },
+    'nav-move': function (el) {
+      var order = navOrder(), k = el.dataset.k, i = order.indexOf(k), j = i + parseInt(el.dataset.d, 10);
+      if (i < 0 || j < 0 || j >= order.length) return;
+      order.splice(i, 1); order.splice(j, 0, k);
+      S.prefs = Object.assign({}, S.prefs, { nav: order });
+      savePrefs(); render();
+    },
+    'revoke-device': function (el) {
+      if (!confirm('Sign out “' + el.dataset.name + '”? It will need the access code to get back in.')) return;
+      api('revokeDevice', { id: el.dataset.id }).then(function (r) {
+        UI.devices = r.devices; var box = document.getElementById('device-list'); if (box) box.innerHTML = devicesHTML(r.devices);
+        toast(el.dataset.name + ' signed out');
+      }, function (e) { toast(e.offline ? 'Needs signal' : e.message); });
+    },
     'sign-out': function () {
       var warn = S.queue.length ? ' ' + S.queue.length + ' change(s) haven’t reached the Sheet yet and will be lost.' : '';
       if (!confirm('Sign out of this phone?' + warn)) return;
-      lsSet('herd.passcode', '');
-      S.passcode = ''; S.db = emptyDb(); S.queue = []; S.lastSync = '';
+      lsSet('herd.token', ''); lsSet('herd.passcode', '');
+      S.token = ''; S.db = emptyDb(); S.queue = []; S.lastSync = '';
       persist().then(function () { currentKey = null; location.hash = ''; render(); });
     }
   };
@@ -2829,6 +2917,15 @@
   document.addEventListener('change', function (e) {
     var t = e.target;
     if (t.matches('input[type=file][data-photo-input]')) { handlePhoto(t); return; }
+    if (t.matches('input[data-nav-toggle]')) {
+      var order = navOrder(), k = t.dataset.navToggle;
+      if (t.checked && order.indexOf(k) < 0) order.push(k);
+      if (!t.checked) order = order.filter(function (x) { return x !== k; });
+      if (order.length < 3) { t.checked = true; toast('Keep at least 3 pages on the bar'); return; }
+      S.prefs = Object.assign({}, S.prefs, { nav: order });
+      savePrefs(); render();
+      return;
+    }
     if (t.matches('select[data-sort]')) {
       var k = t.dataset.sort === '1' ? 'custSort1' : 'custSort2';
       var dir = /^(paid|total|orders)$/.test(t.value) ? 'desc' : 'asc';
@@ -2856,9 +2953,24 @@
   setInterval(function () { if (S.queue.length) trySync(); }, 30000);
   setInterval(renderStatus, 30000);
 
+  function signedIn(res) {
+    S.token = res.token; lsSet('herd.token', res.token);
+    lsSet('herd.who', S.who); lsSet('herd.passcode', '');
+    S.authFailed = false;
+    if (res.prefs) { S.prefs = res.prefs; lsSet('herd.prefs', JSON.stringify(res.prefs)); }
+  }
+
   loadState().catch(function () {}).then(function () {
+    // Phones from before device sign-in kept the code; swap it for a device token once, then forget it.
+    var old = ls('herd.passcode');
+    if (!S.token && old) {
+      return api('login', { passcode: old }).then(signedIn, function (e) {
+        if (e.code === 'AUTH') lsSet('herd.passcode', '');
+      });
+    }
+  }).then(function () {
     render();
-    if (S.passcode) trySync();
+    if (S.token) trySync();
   });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
