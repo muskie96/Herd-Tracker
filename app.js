@@ -93,6 +93,7 @@
     lastSync: '',
     who: ls('herd.who'),
     token: ls('herd.token'),
+    role: ls('herd.role') || 'admin',
     prefs: (function () { try { return JSON.parse(ls('herd.prefs') || 'null') || {}; } catch (e) { return {}; } })(),
     syncing: false,
     offline: false,
@@ -224,6 +225,7 @@
     }).then(function (res) {
       S.db = Object.assign(emptyDb(), res.data || {});
       S.meta = res.meta || {};
+      if (S.meta.role && S.meta.role !== S.role) { S.role = S.meta.role; lsSet('herd.role', S.role); }
       S.queue.forEach(applyLocal);          // anything queued while we were pulling
       S.lastSync = new Date().toISOString();
       S.offline = false;
@@ -381,6 +383,7 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  function isAdmin() { return S.role !== 'farm'; }
   function byId(table, id) { return id ? (S.db[table] || []).find(function (r) { return r.id === id; }) : null; }
 
   function iso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
@@ -690,7 +693,11 @@
     knife: svg('<path d="M3 21L14 10M14 10l6-6a2 2 0 0 1 0 3l-4 5-2-2z"/>'),
     star: svg('<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>'),
     trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
-    sort: svg('<path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/>')
+    sort: svg('<path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/>'),
+    users: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
+    order: svg('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>'),
+    heat: svg('<path d="M12 3c2 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3 0-3-1-5 1-7.5z"/>'),
+    scale: svg('<path d="M12 3v18M5 21h14M4 7h16M7 7l-3 7a3 3 0 0 0 6 0zM17 7l-3 7a3 3 0 0 0 6 0z"/>')
   };
 
   // ==========================================================================
@@ -733,9 +740,12 @@
   var NAV_ITEMS = {
     herd: ['#/herd', 'Herd', I.herd], breeding: ['#/breeding', 'Breeding', I.cal], bulls: ['#/bulls', 'Bulls', I.bull],
     sales: ['#/sales', 'Sales', I.sales], market: ['#/market', 'Market', I.market], add: ['#/add', 'Add', I.add],
+    customers: ['#/customers', 'Customers', I.users], neworder: ['#/order/new', 'New order', I.order],
+    logheat: ['#/breeding/new', 'Log heat', I.heat], compare: ['#/compare', 'Compare', I.scale],
     settings: ['#/settings', 'More', I.gear]
   };
   var NAV_DEFAULT = ['herd', 'breeding', 'bulls', 'sales', 'market', 'add'];
+  var NAV_ALL = NAV_DEFAULT.concat(['customers', 'neworder', 'logheat', 'compare']);
   /** This device's bottom bar (chosen in Settings, saved per device name). */
   function navOrder() {
     var list = (S.prefs && Array.isArray(S.prefs.nav) ? S.prefs.nav : NAV_DEFAULT).filter(function (k) { return NAV_ITEMS[k] && k !== 'settings'; });
@@ -744,7 +754,7 @@
   }
   function nav(active) {
     var keys = navOrder();
-    if (keys.length < NAV_DEFAULT.length) keys = keys.concat(['settings']);   // hidden pages stay reachable from More
+    if (NAV_DEFAULT.some(function (k) { return keys.indexOf(k) < 0; })) keys = keys.concat(['settings']);   // hidden pages stay reachable from More
     return '<nav class="nav" aria-label="Main" style="grid-template-columns:repeat(' + keys.length + ', minmax(0, 1fr))">' + keys.map(function (k) {
       var it = NAV_ITEMS[k];
       return '<a href="' + it[0] + '"' + (k === active ? ' class="on" aria-current="page"' : '') + '>' + it[2] + it[1] + '</a>';
@@ -880,9 +890,8 @@
       : UI.status ? 'Showing ' + statusLabel(UI.status).replace(/^\S+ /, '').toLowerCase() + ' · tap the box again to show everyone' : '';
     return '<div class="screen">' +
       '<header class="hdr home-hdr"><div class="hdr-row brand-row"><img class="emblem" src="brand/emblem-color.png" alt="Musgrove Farms" width="98" height="70">' +
-      '<h1 class="h1">Our Herd</h1>' +
-      '<div class="hdr-side"><a class="icon-btn" href="#/settings" aria-label="Settings">' + I.gear + '</a>' +
-      '<span class="sync-ind" id="sync-ind">' + syncIndHTML() + '</span></div></div>' +
+      '<div class="hdr-titles"><h1 class="h1">Our Herd</h1><span class="sync-ind" id="sync-ind">' + syncIndHTML() + '</span></div>' +
+      '<a class="icon-btn" href="#/settings" aria-label="Settings">' + I.gear + '</a></div>' +
       '<div class="stats three">' + HERD_TILES.map(function (t) {
         var on = !special && UI.status === t[0];
         return '<button type="button" class="stat emo' + (on ? ' on' : '') + '" data-action="status-filter" data-v="' + esc(t[0]) +
@@ -1184,7 +1193,7 @@
     html += '<label class="field"><span class="lbl">Notes</span><textarea class="inp" name="notes" rows="3" placeholder="Anything worth remembering">' + esc(a.notes) + '</textarea></label>' +
       '<p class="form-err" role="alert"></p>' +
       '<button type="submit" class="btn btn-accent btn-block">Save</button>' +
-      (id ? '<button type="button" class="btn btn-danger btn-block" data-action="delete-animal" data-id="' + esc(id) + '">Delete this animal</button>' +
+      (id && isAdmin() ? '<button type="button" class="btn btn-danger btn-block" data-action="delete-animal" data-id="' + esc(id) + '">Delete this animal</button>' +
         '<p class="hint" style="margin:-8px 0 0;text-align:center">Only for mistakes. Use Harvested, Sold or Deceased to keep the record.</p>' : '') +
       '</form></div>';
     return html;
@@ -1721,6 +1730,10 @@
       '<label class="search">' + I.search + '<input id="cust-search" type="search" placeholder="Search name, phone or email" aria-label="Search customers" value="' + esc(UI.custSearch) + '"></label>' +
       '<div class="list" id="cust-list">' + customerRowsHTML() + '</div>';
   }
+  function viewCustomersPage() {
+    return '<div class="screen"><header class="hdr"><div class="hdr-titles"><span class="eyebrow">Past sales</span><h1 class="h1">Customers</h1></div></header>' +
+      '<div id="sync-banner">' + bannerHTML() + '</div><div class="content">' + customersHTML() + '</div>' + nav('customers') + '</div>';
+  }
   function viewCustomer(key) {
     var c = customers().find(function (x) { return x.key === key; });
     if (!c) {
@@ -1825,7 +1838,7 @@
       (id ? (s === 'Cancelled'
           ? '<button type="button" class="btn btn-line btn-block" data-action="order-reopen" data-id="' + esc(id) + '">Reopen order</button>'
           : '<button type="button" class="btn btn-line btn-block" data-action="order-cancel" data-id="' + esc(id) + '">Cancel order</button>') +
-        '<button type="button" class="btn btn-danger btn-block" data-action="delete-order" data-id="' + esc(id) + '">Delete this order</button>' : '') +
+        (isAdmin() ? '<button type="button" class="btn btn-danger btn-block" data-action="delete-order" data-id="' + esc(id) + '">Delete this order</button>' : '') : '') +
       '</form></div>';
   }
 
@@ -2055,7 +2068,8 @@
     if (!hasNum(setting('price_hanging'))) missing.push('your price per lb hanging');
     if (!hasNum(setting('haul_auction'))) missing.push('haul cost to the auction');
     return '<form class="card" data-form="calc" novalidate><h2 class="sec-title">Butcher or auction?</h2>' +
-      (missing.length ? '<p class="warn">Add ' + esc(missing.join(' and ')) + ' under <button type="button" class="link-inline" data-action="market-view" data-v="numbers">Our numbers</button> for a full comparison.</p>' : '') +
+      (missing.length ? '<p class="warn">' + (isAdmin() ? 'Add ' + esc(missing.join(' and ')) + ' under <button type="button" class="link-inline" data-action="market-view" data-v="numbers">Our numbers</button> for a full comparison.'
+        : 'The admin hasn’t saved ' + esc(missing.join(' or ')) + ' yet.') + '</p>' : '') +
       '<label class="field"><span class="lbl">Animal (optional)</span><select class="inp" name="animal">' + selectOpts(animals, '', 'Just estimating') + '</select></label>' +
       '<fieldset class="field"><legend class="lbl">Sell to customers as</legend><div class="opts">' + opts('sell_as', ['Steak', 'Burger'], 'Steak', ['🥩 Steak shares', '🍔 Burger']) + '</div></fieldset>' +
       '<fieldset class="field"><legend class="lbl">Auction class</legend><div class="opts">' + opts('cls', ['Steer', 'Heifer', 'Cow', 'Bull'], 'Steer') + '</div></fieldset>' +
@@ -2149,7 +2163,8 @@
 
   function viewMarket() {
     var run = S.meta && S.meta.pricesRun;
-    var views = [['prices', 'Prices'], ['compare', 'Compare'], ['numbers', 'Our numbers']];
+    var views = [['prices', 'Prices'], ['compare', 'Compare']].concat(isAdmin() ? [['numbers', 'Our numbers']] : []);
+    if (UI.marketView === 'numbers' && !isAdmin()) UI.marketView = 'prices';
     var body = UI.marketView === 'compare' ? calcHTML() : UI.marketView === 'numbers' ? numbersHTML() : marketPricesHTML();
     return '<div class="screen"><header class="hdr"><div class="hdr-row"><div class="hdr-titles"><span class="eyebrow">' +
       (run && run.at ? 'Prices checked ' + esc(relTime(run.at)) : 'Auction prices') + '</span><h1 class="h1">Market</h1></div>' +
@@ -2175,41 +2190,45 @@
   }
   function viewSettings() {
     var order = navOrder();
-    var hidden = NAV_DEFAULT.filter(function (k) { return order.indexOf(k) < 0; });
+    var hidden = NAV_ALL.filter(function (k) { return order.indexOf(k) < 0; });
     var rows = order.concat(hidden).map(function (k, i) {
       var on = order.indexOf(k) >= 0, it = NAV_ITEMS[k];
       return '<div class="nav-row' + (on ? '' : ' off') + '"><label class="nav-check"><input type="checkbox" data-nav-toggle="' + k + '"' + (on ? ' checked' : '') +
         (on && order.length <= 3 ? ' disabled' : '') + '><span class="nav-ico">' + it[2] + '</span>' + it[1] + '</label>' +
-        (on ? '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="-1" aria-label="Move ' + it[1] + ' left"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
-          '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="1" aria-label="Move ' + it[1] + ' right"' + (i === order.length - 1 ? ' disabled' : '') + '>↓</button>' : '') + '</div>';
+        (on ? '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="-1" aria-label="Move ' + it[1] + ' earlier"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+          '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="1" aria-label="Move ' + it[1] + ' later"' + (i === order.length - 1 ? ' disabled' : '') + '>↓</button>' : '') + '</div>';
     }).join('');
+    var offBar = NAV_DEFAULT.filter(function (k) { return order.indexOf(k) < 0; }).concat(['customers']).filter(function (k) { return order.indexOf(k) < 0; });
     return '<div class="screen">' + backHeader('Settings', '#/herd') +
       '<div class="content">' +
-      (hidden.length ? '<section class="card"><h2 class="sec-title">Other pages</h2><div class="btn-row wrap">' + hidden.map(function (k) {
-        return '<a class="btn btn-line btn-sm" href="' + NAV_ITEMS[k][0] + '">' + NAV_ITEMS[k][2] + NAV_ITEMS[k][1] + '</a>';
-      }).join('') + '</div></section>' : '') +
-      '<section class="card"><h2 class="sec-title">Bottom bar on this device</h2>' +
-      '<p class="hint" style="margin:0;font-size:14px">Tick the pages you want and put them in order. Saved for this device name, so it comes back if you sign in again.</p>' +
-      '<div class="nav-list">' + rows + '</div></section>' +
       '<section class="card"><h2 class="sec-title">Sync</h2><div id="settings-sync">' + settingsSyncHTML() + '</div>' +
       '<button type="button" class="btn btn-dark" data-action="sync">' + I.sync + 'Sync now</button></section>' +
       '<form class="card" data-form="who" novalidate><h2 class="sec-title">This device</h2>' +
+      '<div class="kv"><div><span>Access</span><b>' + (isAdmin() ? 'Admin' : 'Farm') + '</b></div></div>' +
       '<label class="field"><span class="lbl">Device name (shown as who made each change)</span><input class="inp" name="who" value="' + esc(S.who) + '" required></label>' +
       '<button type="submit" class="btn btn-line">Save name</button></form>' +
-      '<section class="card"><h2 class="sec-title">Signed-in devices</h2><div id="device-list">' + (UI.devices ? devicesHTML(UI.devices) : '<p class="hint" style="margin:0">Loading…</p>') + '</div>' +
-      '<p class="hint" style="margin:0">Remove any device you don’t recognize. To sign everyone out, change the access code in the Sheet’s script and deploy a new version.</p></section>' +
-      '<section class="card"><h2 class="sec-title">Prices &amp; butcher</h2><p class="hint" style="margin:0;font-size:14px">Haul cost, your prices, deposits and the butcher’s rates live on the Market tab under Our numbers.</p>' +
-      '<a class="btn btn-line" href="#/market" data-action="market-view" data-v="numbers">Open Our numbers</a></section>' +
+      (isAdmin()
+        ? '<section class="card"><h2 class="sec-title">Signed-in devices</h2><div id="device-list">' + (UI.devices ? devicesHTML(UI.devices) : '<p class="hint" style="margin:0">Loading…</p>') + '</div>' +
+          '<p class="hint" style="margin:0">Remove any device you don’t recognize. Changing an access code in the Sheet’s script (and deploying) signs out every device that used it.</p></section>' +
+          '<section class="card"><h2 class="sec-title">Prices &amp; butcher</h2><p class="hint" style="margin:0;font-size:14px">Haul cost, your prices, deposits and the butcher’s rates live on the Market tab under Our numbers.</p>' +
+          '<a class="btn btn-line" href="#/market" data-action="market-view" data-v="numbers">Open Our numbers</a></section>'
+        : '<section class="card"><h2 class="sec-title">Admin settings</h2><p class="hint" style="margin:0;font-size:14px">Devices, prices and deleting records are managed by the farm admin.</p></section>') +
       '<section class="card"><h2 class="sec-title">Install tips</h2>' +
       '<p class="hint" style="margin:0;font-size:14px;line-height:1.5"><strong>iPhone:</strong> open in Safari → Share → Add to Home Screen.<br><strong>Android:</strong> open in Chrome → ⋮ menu → Add to Home screen (or Install app).</p></section>' +
       '<section class="card"><h2 class="sec-title">Sign out</h2><p class="hint" style="margin:0;font-size:14px;line-height:1.5">Signs this device out and clears its copy of the herd. The Google Sheet is not touched.</p>' +
       '<button type="button" class="btn btn-danger" data-action="sign-out">Sign out of this device</button></section>' +
+      '<section class="card"><h2 class="sec-title">Bottom bar on this device</h2>' +
+      '<p class="hint" style="margin:0;font-size:14px">Tick the pages and shortcuts you want and put them in order. Saved for this device name, so it comes back if you sign in again.</p>' +
+      '<div class="nav-list">' + rows + '</div></section>' +
+      (offBar.length ? '<section class="card"><h2 class="sec-title">Pages not on the bar</h2><div class="btn-row wrap">' + offBar.map(function (k) {
+        return '<a class="btn btn-line btn-sm" href="' + NAV_ITEMS[k][0] + '">' + NAV_ITEMS[k][2] + NAV_ITEMS[k][1] + '</a>';
+      }).join('') + '</div></section>' : '') +
       '<p class="updated">Herd Tracker ' + esc(VERSION) + '</p></div>' + nav('settings') + '</div>';
   }
   function devicesHTML(list) {
     if (!list || !list.length) return '<p class="hint" style="margin:0">No devices found.</p>';
     return '<div class="sub-list">' + list.map(function (d) {
-      return '<span class="li"><span><strong>' + esc(d.name) + '</strong>' + (d.me ? ' <span class="pill p-herd">This device</span>' : '') +
+      return '<span class="li"><span><strong>' + esc(d.name) + '</strong>' + (d.role === 'admin' ? ' <span class="pill p-accent">Admin</span>' : '') + (d.me ? ' <span class="pill p-herd">This device</span>' : '') +
         '<br><span class="hint">Signed in ' + esc(fmtDate(localDateOf(d.created), true)) + ' · last used ' + esc(relTime(d.seen)) + '</span></span>' +
         (d.me ? '' : '<button type="button" class="btn btn-danger btn-sm" data-action="revoke-device" data-id="' + esc(d.id) + '" data-name="' + esc(d.name) + '">Remove</button>') + '</span>';
     }).join('') + '</div>';
@@ -2262,6 +2281,8 @@
         return { html: viewBulls() };
       case 'sales': return { html: viewSales() };
       case 'customer': return { html: viewCustomer(p[1]) };
+      case 'customers': return { html: viewCustomersPage() };
+      case 'compare': UI.marketView = 'compare'; return { html: viewMarket(), form: true };
       case 'order':
         if (p[1] === 'new') return { html: viewOrderForm(null, q), form: true };
         if (p[2] === 'assign') return { html: viewAssign(p[1]) };
@@ -2309,7 +2330,7 @@
   }
   function afterRender(fresh) {
     hydratePhotos();
-    if (fresh && parseRoute().p[0] === 'settings') loadDevices();
+    if (fresh && parseRoute().p[0] === 'settings' && isAdmin()) loadDevices();
     document.querySelectorAll('form[data-form]').forEach(function (f) { onFormInput(f, null); });
     if (fresh && parseRoute().q.pay) {
       var pay = document.getElementById('payments');
@@ -2919,6 +2940,7 @@
     if (t.matches('input[type=file][data-photo-input]')) { handlePhoto(t); return; }
     if (t.matches('input[data-nav-toggle]')) {
       var order = navOrder(), k = t.dataset.navToggle;
+      if (t.checked && order.length >= 6) { t.checked = false; toast('Up to 6 on the bar — untick one first'); return; }
       if (t.checked && order.indexOf(k) < 0) order.push(k);
       if (!t.checked) order = order.filter(function (x) { return x !== k; });
       if (order.length < 3) { t.checked = true; toast('Keep at least 3 pages on the bar'); return; }
@@ -2955,6 +2977,7 @@
 
   function signedIn(res) {
     S.token = res.token; lsSet('herd.token', res.token);
+    S.role = res.role || 'admin'; lsSet('herd.role', S.role);
     lsSet('herd.who', S.who); lsSet('herd.passcode', '');
     S.authFailed = false;
     if (res.prefs) { S.prefs = res.prefs; lsSet('herd.prefs', JSON.stringify(res.prefs)); }
