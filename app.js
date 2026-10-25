@@ -16,24 +16,26 @@
 
   // Animal statuses. Stored text → how it shows in the app.
   var STATUS_INFO = {
-    'In herd':      { label: 'In herd',          short: 'In herd',   pill: 'p-herd',  btn: 's-herd' },
-    'Ready steak':  { label: '🥩 Ready – Steak',  short: '🥩 Ready',  pill: 'p-ready', btn: 's-ready' },
-    'Ready burger': { label: '🍔 Ready – Burger', short: '🍔 Ready',  pill: 'p-ready', btn: 's-ready' },
+    'In herd':      { label: 'In herd',          short: 'In herd',   pill: 'p-herd',  btn: 's-herd',  emoji: '🐄' },
+    'With cows':    { label: '🐂 In with cows',   short: 'With cows', pill: 'p-ready', btn: 's-ready', emoji: '🐂' },
+    'Ready steak':  { label: '🥩 Ready – Steak',  short: '🥩 Ready',  pill: 'p-ready', btn: 's-ready', emoji: '🥩' },
+    'Ready burger': { label: '🍔 Ready – Burger', short: '🍔 Ready',  pill: 'p-ready', btn: 's-ready', emoji: '🍔' },
     'Harvested':    { label: 'Harvested',        short: 'Harvested', pill: 'p-harv',  btn: 's-harv' },
     'Sold':         { label: 'Sold',             short: 'Sold',      pill: 'p-harv',  btn: 's-harv' },
     'Deceased':     { label: 'Deceased',         short: 'Deceased',  pill: 'p-dead',  btn: 's-dead' }
   };
   var CATTLE_STATUSES = ['In herd', 'Ready steak', 'Ready burger', 'Harvested', 'Sold', 'Deceased'];
-  var BULL_STATUSES = ['In herd', 'Ready burger', 'Harvested', 'Sold', 'Deceased'];
-  var ACTIVE = ['In herd', 'Ready steak', 'Ready burger'];
+  var BULL_STATUSES = ['With cows', 'In herd', 'Ready burger', 'Harvested', 'Sold', 'Deceased'];
+  var ACTIVE = ['In herd', 'With cows', 'Ready steak', 'Ready burger'];
+  var HEAT_CYCLE = 21;
+  var OVERDUE_GRACE = 14;
   var PAST = ['Harvested', 'Sold', 'Deceased'];
   var SEXES = ['Cow', 'Heifer', 'Steer', 'Calf'];
   var ORIGINS = ['Born on farm', 'Purchased'];
   var SHARE_HEAD = { Whole: 1, Half: 0.5, Quarter: 0.25 };
   var BEEF_SHARES = ['Whole', 'Half', 'Quarter', 'Burger'];
   var PORK_SHARES = ['Whole', 'Half', 'Quarter'];
-  var COMMON_BREEDS = ['Angus', 'Black Angus', 'Red Angus', 'Hereford', 'Black Baldy', 'Charolais',
-    'Simmental', 'Limousin', 'Shorthorn', 'Gelbvieh', 'Brahman', 'Highland', 'Wagyu', 'Holstein', 'Jersey'];
+  var BREED_OPTIONS = ['Angus', 'Red Angus', 'Hereford', 'Mix'];
 
   // Saved numbers (Settings tab). Key → [label, default, input type]
   var SETTING_DEFAULTS = {
@@ -82,7 +84,7 @@
   // State
   // ==========================================================================
   function emptyDb() {
-    return { Animals: [], Breedings: [], Calvings: [], Orders: [], Prices: [], Photos: [], Treatments: [], Settings: [] };
+    return { Animals: [], Breedings: [], Calvings: [], Orders: [], Prices: [], Photos: [], Treatments: [], Settings: [], BullPeriods: [] };
   }
 
   var S = {
@@ -458,16 +460,22 @@
   // ==========================================================================
   function st(a) {
     var s = (a && a.status) || 'In herd';
+    if (s === 'With cows' && !isBull(a)) return 'In herd';
     if (s === 'Ready for harvest') return 'Ready steak';
     return STATUS_INFO[s] ? s : 'In herd';
   }
-  function statusLabel(s) { return (STATUS_INFO[s] || STATUS_INFO['In herd']).label; }
+  function statusLabel(s, a) {
+    if (a && isBull(a) && s === 'In herd') return 'Out of the field';
+    return (STATUS_INFO[s] || STATUS_INFO['In herd']).label;
+  }
+  function isOffsite(a) { return !!a && a.offsite === 'yes' && !isBull(a); }
   function isActive(a) { return ACTIVE.indexOf(st(a)) >= 0; }
   function isBull(a) { return a && a.sex === 'Bull'; }
   function isFemale(a) { return a.sex === 'Cow' || a.sex === 'Heifer' || (a.sex === 'Calf' && a.calf_sex === 'Heifer'); }
-  function canBreed(a) { return a.sex === 'Cow' || a.sex === 'Heifer'; }
-  function origin(a) { return a.origin === 'Purchased' || a.origin === 'Leased' ? 'Purchased' : 'Born on farm'; }
-  function cattle() { return S.db.Animals.filter(function (a) { return !isBull(a); }); }
+  function canBreed(a) { return (a.sex === 'Cow' || a.sex === 'Heifer') && !isOffsite(a); }
+  function origin(a) { return a.origin === 'Purchased' || a.origin === 'Leased' || isBull(a) ? 'Purchased' : 'Born on farm'; }
+  function cattle() { return S.db.Animals.filter(function (a) { return !isBull(a) && !isOffsite(a); }); }
+  function offsiteAnimals() { return S.db.Animals.filter(isOffsite); }
   function bulls() { return S.db.Animals.filter(isBull); }
   function dispName(a) { return a ? (a.name || (a.tag ? 'Tag ' + a.tag : 'No tag yet')) : 'Unknown'; }
   function tagName(a) {
@@ -504,11 +512,54 @@
   // ==========================================================================
   // Helpers: breeding
   // ==========================================================================
-  function expected(b) { return b.expected_calving || addDays(b.bred_date, GESTATION_DAYS); }
+  function isExposure(b) { return !b.bred_date && !!b.exposure_start; }
+  function bredOn(b) { return b.bred_date || b.exposure_start || ''; }
+  /** Earliest and latest expected calving. A pasture exposure gives a window; a dated breeding gives one day. */
+  function dueStart(b) { return b.bred_date ? (b.expected_calving || addDays(b.bred_date, GESTATION_DAYS)) : addDays(b.exposure_start, GESTATION_DAYS); }
+  function dueEnd(b) {
+    if (b.bred_date) return dueStart(b);
+    var end = b.exposure_end || today();
+    return addDays(end < b.exposure_start ? b.exposure_start : end, GESTATION_DAYS);
+  }
+  function expected(b) { return dueStart(b); }
+  function dueText(b, withYear) {
+    var a = dueStart(b), z = dueEnd(b);
+    if (a === z) return fmtDate(a, withYear);
+    return fmtDate(a, withYear) + ' – ' + fmtDate(z, withYear) + (b.exposure_end ? '' : ' (so far)');
+  }
+  function isOverdue(b) {
+    if ((b.result || 'Pending') !== 'Pending') return false;
+    var d = daysBetween(dueEnd(b), today());
+    return d !== null && d > OVERDUE_GRACE && (!!b.bred_date || !!b.exposure_end);
+  }
   function pendingBreedings() { return S.db.Breedings.filter(function (b) { return (b.result || 'Pending') === 'Pending'; }); }
   function pendingFor(cowId) {
     return pendingBreedings().filter(function (b) { return b.cow_id === cowId; })
-      .sort(function (x, y) { return String(y.bred_date).localeCompare(String(x.bred_date)); })[0] || null;
+      .sort(function (x, y) { return String(bredOn(y)).localeCompare(String(bredOn(x))); })[0] || null;
+  }
+  /** Next expected heat: 21-day cycles from the most recent heat you logged (rolled forward to today or later). */
+  function nextHeat(cowId) {
+    var last = S.db.Breedings.filter(function (b) { return b.cow_id === cowId && b.heat_date; })
+      .map(function (b) { return b.heat_date; }).sort().pop();
+    if (!last) return null;
+    var d = last, t = today(), n = 0;
+    do { d = addDays(d, HEAT_CYCLE); n++; } while (d < t && n < 60);
+    return { last: last, next: d };
+  }
+  function periodsFor(bullId) {
+    return S.db.BullPeriods.filter(function (p) { return p.bull_id === bullId; })
+      .sort(function (x, y) { return String(y.start_date).localeCompare(String(x.start_date)); });
+  }
+  function openPeriod(bullId) { return periodsFor(bullId).find(function (p) { return !p.end_date; }) || null; }
+  /** Cows and heifers that a bull going in today would be exposed to. */
+  function exposableCows() {
+    var pend = {};
+    pendingBreedings().forEach(function (b) { pend[b.cow_id] = true; });
+    return S.db.Animals.filter(function (a) {
+      if (!canBreed(a) || st(a) !== 'In herd' || pend[a.id]) return false;
+      var m = monthsOld(a.birth_date);
+      return a.sex === 'Cow' || m === null || m >= 12;
+    });
   }
   function bullLabel(b) {
     if (b.method === 'AI') return 'AI';
@@ -653,8 +704,9 @@
     return '<span class="thumb"><span class="ph"' + (a.photo_id ? ' data-photo="' + esc(a.photo_id) + '"' : '') + '>' +
       I.camera + '</span>' + earTag(a.tag, 'sm') + '</span>';
   }
-  function statusPill(s) {
+  function statusPill(s, a) {
     var m = STATUS_INFO[s] || STATUS_INFO['In herd'];
+    if (m.emoji) return '<span class="emo-badge" role="img" aria-label="' + esc(statusLabel(s, a).replace(/^\S+ /, '')) + '" title="' + esc(statusLabel(s, a)) + '">' + m.emoji + '</span>';
     return '<span class="pill ' + m.pill + '">' + esc(m.short) + '</span>';
   }
   function animalSub(a) {
@@ -668,7 +720,7 @@
   function animalRow(a) {
     return '<a class="row" href="#/animal/' + esc(a.id) + '">' + thumb(a) +
       '<span class="row-main"><span class="row-title">' + esc(dispName(a)) + '</span>' +
-      '<span class="row-sub">' + esc(animalSub(a)) + '</span></span>' + statusPill(st(a)) + '</a>';
+      '<span class="row-sub">' + esc(animalSub(a)) + '</span></span>' + statusPill(st(a), a) + '</a>';
   }
 
   function nav(active) {
@@ -763,17 +815,19 @@
   }
 
   // ==========================================================================
-  // Screen: herd list (cows, heifers, steers, calves — bulls live on their own page)
+  // Screen: herd list (cows, heifers, steers, calves — bulls live on their own page,
+  // offsite purchases and past animals behind their own chips)
   // ==========================================================================
-  var HERD_TILES = [['', 'In herd', ''], ['Ready steak', '🥩 Ready', ' ready'], ['Ready burger', '🍔 Ready', ' ready'], ['past', 'Past', '']];
+  var HERD_TILES = [['In herd', '🐄', 'In herd'], ['Ready steak', '🥩', 'Ready for steak'], ['Ready burger', '🍔', 'Ready for burger']];
+  var HERD_CHIPS = ['All', 'Cows', 'Heifers', 'Steers', 'Calves', 'Offsite', 'Past'];
   function herdPool() {
-    var all = cattle();
-    if (UI.status === 'past') return all.filter(function (a) { return PAST.indexOf(st(a)) >= 0; });
-    if (UI.status) return all.filter(function (a) { return st(a) === UI.status; });
-    return all.filter(isActive);
+    if (UI.sex === 'Offsite') return offsiteAnimals();
+    if (UI.sex === 'Past') return cattle().filter(function (a) { return PAST.indexOf(st(a)) >= 0; });
+    var all = cattle().filter(isActive);
+    return UI.status ? all.filter(function (a) { return st(a) === UI.status; }) : all;
   }
   function sexMatch(a, chip) {
-    if (chip === 'All') return true;
+    if (chip === 'All' || chip === 'Offsite' || chip === 'Past') return true;
     return a.sex === { Cows: 'Cow', Heifers: 'Heifer', Steers: 'Steer', Calves: 'Calf' }[chip];
   }
   function herdListHTML() {
@@ -782,40 +836,43 @@
       if (!q) return true;
       return [a.tag, a.name, a.breed, a.tag_history].some(function (v) { return String(v || '').toLowerCase().indexOf(q) >= 0; });
     }).sort(byTag);
-    if (!cattle().length) {
+    if (!cattle().length && !offsiteAnimals().length) {
       return '<div class="empty"><b>No animals yet</b>Add your first cow, or paste rows into the Animals tab of the Sheet.' +
         '<a class="btn btn-accent" href="#/add">' + I.plus + 'Add an animal</a></div>';
     }
-    if (!list.length) return '<div class="empty"><b>No matches</b>Try a different search or filter.</div>';
+    if (!list.length) {
+      return '<div class="empty"><b>' + (UI.sex === 'Offsite' ? 'No offsite purchases' : UI.sex === 'Past' ? 'No past animals yet' : 'No matches') + '</b>' +
+        (UI.sex === 'Offsite' ? 'Animals bought to go straight to the butcher show up here.' : 'Try a different search or filter.') + '</div>';
+    }
     return list.map(animalRow).join('');
   }
   function viewHerd() {
     var all = cattle();
-    var count = function (k) {
-      if (k === '') return all.filter(function (a) { return st(a) === 'In herd'; }).length;
-      if (k === 'past') return all.filter(function (a) { return PAST.indexOf(st(a)) >= 0; }).length;
-      return all.filter(function (a) { return st(a) === k; }).length;
-    };
+    var count = function (k) { return all.filter(function (a) { return st(a) === k; }).length; };
+    var special = UI.sex === 'Offsite' || UI.sex === 'Past';
     var pool = herdPool();
-    var chips = ['All', 'Cows', 'Heifers', 'Steers', 'Calves'];
-    var note = UI.status === 'past' ? 'Showing harvested, sold and deceased · tap Past again to go back'
-      : UI.status ? 'Showing ' + statusLabel(UI.status) + ' · tap the box again to go back'
-      : 'Showing everything in the herd, including animals tagged ready';
+    var note = UI.sex === 'Offsite' ? 'Bought offsite to go straight to the butcher — not part of the herd'
+      : UI.sex === 'Past' ? 'Harvested, sold and deceased'
+      : UI.status ? 'Showing ' + statusLabel(UI.status).replace(/^\S+ /, '').toLowerCase() + ' · tap the box again to show everyone'
+      : 'Everyone in the herd · tap a box above to filter';
     return '<div class="screen">' +
       '<header class="hdr"><div class="hdr-row"><div class="hdr-titles"><span class="eyebrow">Herd Tracker</span><h1 class="h1">The Herd</h1></div>' +
       '<div class="hdr-side"><a class="icon-btn" href="#/settings" aria-label="Settings">' + I.gear + '</a>' +
       '<span class="sync-ind" id="sync-ind">' + syncIndHTML() + '</span></div></div>' +
-      '<div class="stats">' + HERD_TILES.map(function (t) {
-        var on = UI.status === t[0] && t[0] !== '';
-        return '<button type="button" class="stat' + t[2] + (on ? ' on' : '') + '" data-action="status-filter" data-v="' + esc(t[0]) +
-          '" aria-pressed="' + on + '"><b>' + count(t[0]) + '</b><span>' + t[1] + '</span></button>';
+      '<div class="stats three">' + HERD_TILES.map(function (t) {
+        var on = !special && UI.status === t[0];
+        return '<button type="button" class="stat emo' + (on ? ' on' : '') + '" data-action="status-filter" data-v="' + esc(t[0]) +
+          '" aria-pressed="' + on + '" aria-label="' + esc(t[2]) + ': ' + count(t[0]) + '"><span class="stat-emo" aria-hidden="true">' + t[1] + '</span><b>' + count(t[0]) + '</b></button>';
       }).join('') + '</div></header>' +
       '<div id="sync-banner">' + bannerHTML() + '</div>' +
       '<div class="content">' +
       '<label class="search">' + I.search + '<input id="herd-search" type="search" placeholder="Search tag, old tag, name or breed" aria-label="Search herd" value="' + esc(UI.search) + '"></label>' +
-      '<div class="chips" role="group" aria-label="Filter by type">' + chips.map(function (c) {
-        var n = pool.filter(function (a) { return sexMatch(a, c); }).length;
-        return '<button type="button" class="chip' + (UI.sex === c ? ' on' : '') + '" data-action="sex-filter" data-v="' + c + '">' + c + (c === 'All' || UI.sex === c ? ' ' + n : '') + '</button>';
+      '<div class="chips" role="group" aria-label="Filter">' + HERD_CHIPS.map(function (c) {
+        var n = c === 'Offsite' ? offsiteAnimals().length : c === 'Past' ? cattle().filter(function (a) { return PAST.indexOf(st(a)) >= 0; }).length
+          : pool.filter(function (a) { return sexMatch(a, c); }).length;
+        var show = UI.sex === c || c === 'All' || c === 'Offsite' || c === 'Past';
+        return '<button type="button" class="chip' + (UI.sex === c ? ' on' : '') + (c === 'Offsite' || c === 'Past' ? ' chip-alt' : '') +
+          '" data-action="sex-filter" data-v="' + c + '">' + c + (show && !(c === 'All' && special) ? ' ' + n : '') + '</button>';
       }).join('') + '</div>' +
       '<span class="list-note">' + esc(note) + '</span>' +
       '<div class="list" id="herd-list">' + herdListHTML() + '</div></div>' + nav('herd') + '</div>';
@@ -824,16 +881,18 @@
   // ==========================================================================
   // Screen: animal profile (cattle and bulls)
   // ==========================================================================
+  function statusChoices(a) {
+    if (isBull(a)) return BULL_STATUSES;
+    if (isOffsite(a)) return ['Ready steak', 'Ready burger', 'Harvested', 'Sold'];
+    return CATTLE_STATUSES;
+  }
   function viewAnimal(id) {
     var a = byId('Animals', id);
     if (!a) return viewNotFound('That animal isn’t here anymore.');
-    var bull = isBull(a);
+    var bull = isBull(a), offsite = isOffsite(a);
     var home = bull ? '#/bulls' : '#/herd';
-    var bornHere = origin(a) === 'Born on farm';
-    var dam = byId('Animals', a.dam_id), sire = byId('Animals', a.sire_id);
     var offspring = S.db.Animals.filter(function (x) { return x.dam_id === a.id || x.sire_id === a.id; })
       .sort(function (x, y) { return String(y.birth_date).localeCompare(String(x.birth_date)); });
-    var statuses = bull ? BULL_STATUSES : CATTLE_STATUSES;
     var photos = animalPhotos(a);
 
     var html = '<div class="screen">' +
@@ -844,43 +903,56 @@
       '<div class="hero-photo-btn"><label class="btn btn-sm btn-pill file-btn">' + I.camera + 'Add photo' +
       '<input type="file" accept="image/*" data-photo-input="gallery" data-id="' + esc(a.id) + '"></label></div></div>' +
       '<div class="hero-id">' + earTag(a.tag, 'lg') + '<div class="names"><h1 class="animal-name">' + esc(dispName(a)) + '</h1>' +
-      '<span class="meta">' + esc([a.breed, sexText(a), ageText(a.birth_date)].filter(Boolean).join(' · ')) + '</span></div></div>' +
+      '<span class="meta">' + esc((bull ? [a.breed, 'Bull'] : [a.breed, sexText(a), ageText(a.birth_date)]).filter(Boolean).join(' · ')) + '</span></div></div>' +
       '<div id="sync-banner">' + bannerHTML() + '</div>' +
       '<div class="content" style="padding-top:20px">' +
+      (offsite ? '<div class="info">' + I.info + '<span><strong>Offsite purchase.</strong> Bought to go straight to the butcher — not counted in the herd, but you can assign it to waitlist orders.</span></div>' : '') +
 
-      '<section class="field"><h2 class="sec-title">Status</h2><div class="status-grid">' + statuses.map(function (s) {
+      '<section class="field"><h2 class="sec-title">Status</h2><div class="status-grid">' + statusChoices(a).map(function (s) {
         var on = st(a) === s;
         return '<button type="button" class="' + STATUS_INFO[s].btn + (on ? ' on' : '') + '" aria-pressed="' + on + '" data-action="set-status" data-id="' + esc(a.id) + '" data-v="' + esc(s) + '">' +
-          (on ? I.check : '') + esc(STATUS_INFO[s].label) + '</button>';
+          (on ? I.check : '') + esc(statusLabel(s, a)) + '</button>';
       }).join('') + '</div></section>';
 
     html += harvestCard(a);
 
-    html += '<section class="card"><div class="kv">' +
-      '<div><span>Ear tag</span><b>' + esc(a.tag || 'None yet') + '</b></div>' +
-      '<div><span>Breed</span><b>' + esc(a.breed || '—') + '</b></div>' +
-      '<div><span>Sex</span><b>' + esc(sexText(a)) + '</b></div>' +
-      '<div><span>Born</span><b>' + esc(fmtDate(a.birth_date, true)) + '</b></div>' +
-      '<div><span>Origin</span><b>' + esc(origin(a)) + '</b></div>' +
-      (!bornHere ? '<div><span>Added to herd</span><b>' + esc(fmtDate(a.joined_date, true)) + '</b></div>' : '') +
-      (a.tag_history ? '<div style="grid-column:1/-1"><span>Previous tags</span><b>' + esc(a.tag_history) + '</b></div>' : '') +
-      '</div></section>';
+    if (bull) {
+      html += '<section class="card"><div class="kv">' +
+        '<div><span>Ear tag</span><b>' + esc(a.tag || 'None') + '</b></div>' +
+        '<div><span>Breed</span><b>' + esc(a.breed || '—') + '</b></div>' +
+        (a.tag_history ? '<div style="grid-column:1/-1"><span>Previous tags</span><b>' + esc(a.tag_history) + '</b></div>' : '') +
+        '</div></section>';
+      html += bullPeriodsCard(a);
+      html += bullStatsCard(a);
+    } else {
+      html += '<section class="card"><div class="kv">' +
+        '<div><span>Ear tag</span><b>' + esc(a.tag || 'None yet') + '</b></div>' +
+        '<div><span>Breed</span><b>' + esc(a.breed || '—') + '</b></div>' +
+        '<div><span>Sex</span><b>' + esc(sexText(a)) + '</b></div>' +
+        '<div><span>Born</span><b>' + esc(fmtDate(a.birth_date, true)) + '</b></div>' +
+        '<div><span>Origin</span><b>' + esc(offsite ? 'Purchased · offsite' : origin(a)) + '</b></div>' +
+        (origin(a) === 'Purchased' && !offsite ? '<div><span>Added to herd</span><b>' + esc(fmtDate(a.joined_date, true)) + '</b></div>' : '') +
+        (origin(a) === 'Purchased' ? '<div><span>Purchase price</span><b>' + (hasNum(a.purchase_price) ? money(a.purchase_price) : '—') + '</b></div>' : '') +
+        (a.tag_history ? '<div style="grid-column:1/-1"><span>Previous tags</span><b>' + esc(a.tag_history) + '</b></div>' : '') +
+        '</div></section>';
+    }
 
     html += ivermectinCard(a);
     html += photosCard(a, photos);
 
     if (canBreed(a)) html += femaleBreedingCard(a);
-    if (bull) html += bullStatsCard(a);
 
-    html += '<section class="card"><h2 class="sec-title">' + (bornHere ? 'Lineage' : 'Offspring') + '</h2>' +
-      (bornHere ? '<div class="lineage">' + parentBox('Dam (mother)', dam) + parentBox('Sire (father)', sire) + '</div>'
-        : '<p class="hint" style="margin:0">Purchased — parents weren’t on this farm.</p>') +
-      '<div class="sub-list">' + (bornHere ? '<span class="hint" style="padding-bottom:6px">Offspring (' + offspring.length + ')</span>' : '') +
-      (offspring.length ? offspring.map(function (k) {
-        var other = k.dam_id === a.id ? byId('Animals', k.sire_id) : byId('Animals', k.dam_id);
-        var rel = k.dam_id === a.id ? (other ? ' · by ' + dispName(other) : '') : (other ? ' · out of ' + dispName(other) : '');
-        return '<a href="#/animal/' + esc(k.id) + '"><span><strong>' + esc(k.tag || k.name || 'No tag') + '</strong> · ' + esc(sexText(k) + rel) + '</span><span class="when">' + esc(fmtMonth(k.birth_date)) + '</span></a>';
-      }).join('') : '<span class="li muted">None recorded</span>') + '</div></section>';
+    if (!offsite) {
+      html += '<section class="card"><div class="card-head"><h2 class="sec-title">' + (bull ? 'Offspring' : 'Lineage') + '</h2>' +
+        (!bull ? '<a class="link-inline" href="#/animal/' + esc(a.id) + '/edit#lineage">Edit</a>' : '') + '</div>' +
+        (!bull ? '<div class="lineage">' + parentBox('Dam (mother)', byId('Animals', a.dam_id), a.dam_name) + parentBox('Sire (father)', byId('Animals', a.sire_id), a.sire_name) + '</div>' : '') +
+        '<div class="sub-list">' + (!bull ? '<span class="hint" style="padding-bottom:6px">Offspring (' + offspring.length + ')</span>' : '') +
+        (offspring.length ? offspring.map(function (k) {
+          var other = k.dam_id === a.id ? byId('Animals', k.sire_id) : byId('Animals', k.dam_id);
+          var rel = k.dam_id === a.id ? (other ? ' · by ' + dispName(other) : '') : (other ? ' · out of ' + dispName(other) : '');
+          return '<a href="#/animal/' + esc(k.id) + '"><span><strong>' + esc(k.tag || k.name || 'No tag') + '</strong> · ' + esc(sexText(k) + rel) + '</span><span class="when">' + esc(fmtMonth(k.birth_date)) + '</span></a>';
+        }).join('') : '<span class="li muted">None recorded</span>') + '</div></section>';
+    }
 
     if (canBreed(a)) {
       var calvings = S.db.Calvings.filter(function (c) { return c.cow_id === a.id; })
@@ -900,8 +972,11 @@
     return html;
   }
 
-  function parentBox(label, p) {
-    if (!p) return '<div><span class="lbl">' + label + '</span><span class="nm">Unknown</span></div>';
+  function parentBox(label, p, typed) {
+    if (!p) {
+      return '<div><span class="lbl">' + label + '</span><span class="nm">' + esc(typed || 'Unknown') + '</span>' +
+        (typed ? '<span class="gp">Not in the app</span>' : '') + '</div>';
+    }
     var gp = [byId('Animals', p.dam_id), byId('Animals', p.sire_id)].filter(Boolean).map(dispName);
     return '<a href="#/animal/' + esc(p.id) + '"><span class="lbl">' + label + '</span><span class="nm">' + esc(tagName(p)) + '</span>' +
       '<span class="gp">' + esc(p.breed || '') + (gp.length ? (p.breed ? ' · ' : '') + 'from ' + gp.join(' & ') : '') + '</span></a>';
@@ -909,7 +984,7 @@
 
   function harvestCard(a) {
     var s = st(a);
-    if (s === 'In herd' || s === 'Deceased') return '';
+    if (s === 'In herd' || s === 'Deceased' || s === 'With cows') return '';
     var href = '#/animal/' + esc(a.id) + '/harvest';
     if (s === 'Sold') {
       return '<section class="card"><div class="card-head"><h2 class="sec-title">Sale</h2><a class="link-inline" href="' + href + '">Edit</a></div>' +
@@ -955,7 +1030,7 @@
           '<span class="g-age">' + esc(label) + '</span>' + (p.photo_id === a.photo_id ? '<span class="g-main" aria-label="Main photo">' + I.star + '</span>' : '') + '</a>';
       }).join('') +
       '<label class="g-add file-btn">' + I.plus + '<span>Add</span><input type="file" accept="image/*" data-photo-input="gallery" data-id="' + esc(a.id) + '"></label>' +
-      '</div><span class="hint">Each photo is tagged with ' + esc(dispName(a)) + '’s age on the day it was taken. Tap one to change its date.</span></section>';
+      '</div><span class="hint">' + (a.birth_date ? 'Each photo is tagged with ' + esc(dispName(a)) + '’s age on the day it was taken. ' : '') + 'Tap one to change its date.</span></section>';
   }
 
   function femaleBreedingCard(a) {
@@ -964,51 +1039,54 @@
       .sort(function (x, y) { return String(y.calving_date).localeCompare(String(x.calving_date)); })[0];
     var lastLine = lastCalf ? 'Last calved ' + fmtDate(lastCalf.calving_date, true) : 'No calvings recorded';
     if (!b) {
+      var h = nextHeat(a.id);
       return '<section class="card dark"><div class="card-head"><h2 class="sec-title">Breeding</h2><span class="pill p-harv">Open</span></div>' +
         '<span class="muted" style="font-size:14px">Not bred right now · ' + esc(lastLine) + '</span>' +
-        (isActive(a) ? '<a class="btn btn-accent" href="#/breeding/new?cow=' + esc(a.id) + '">' + I.plus + 'Log breeding</a>' : '') + '</section>';
+        (h ? '<span class="muted" style="font-size:14px">Next heat ≈ <strong style="color:var(--accent)">' + esc(fmtDate(h.next)) + '</strong> (21-day cycle from ' + esc(fmtDate(h.last)) + ')</span>' : '') +
+        (isActive(a) ? '<a class="btn btn-accent" href="#/breeding/new?cow=' + esc(a.id) + '">' + I.plus + 'Log heat or breeding</a>' : '') + '</section>';
     }
-    var exp = expected(b);
-    var elapsed = daysBetween(b.bred_date, today()) || 0;
+    var exposure = isExposure(b);
+    var start = bredOn(b);
+    var elapsed = daysBetween(start, today()) || 0;
     var pct = Math.max(0, Math.min(100, Math.round(elapsed / GESTATION_DAYS * 100)));
-    return '<section class="card dark"><div class="card-head"><h2 class="sec-title">Breeding</h2><span class="pill p-accent">Bred</span></div>' +
-      '<span class="muted" style="font-size:14px">Bred to <strong style="color:var(--on-surface)">' + esc(bullLabel(b)) + '</strong> on ' + esc(fmtDate(b.bred_date, true)) + '</span>' +
-      '<span class="muted" style="font-size:14px">Expected calving</span>' +
-      '<span class="big-num accent-text">' + esc(fmtDate(exp, true)) + '</span>' +
+    var over = isOverdue(b);
+    return '<section class="card dark"><div class="card-head"><h2 class="sec-title">Breeding</h2><span class="pill ' + (over ? 'p-dead' : 'p-accent') + '">' + (over ? 'Overdue' : exposure ? 'Exposed' : 'Bred') + '</span></div>' +
+      '<span class="muted" style="font-size:14px">' + (exposure
+        ? 'In with <strong style="color:var(--on-surface)">' + esc(bullLabel(b)) + '</strong> ' + esc(fmtDate(b.exposure_start, true)) + (b.exposure_end ? ' – ' + esc(fmtDate(b.exposure_end, true)) : ' – still in')
+        : 'Bred to <strong style="color:var(--on-surface)">' + esc(bullLabel(b)) + '</strong> on ' + esc(fmtDate(b.bred_date, true))) + '</span>' +
+      '<span class="muted" style="font-size:14px">' + (exposure ? 'Calving window' : 'Expected calving') + '</span>' +
+      '<span class="big-num accent-text"' + (exposure ? ' style="font-size:26px"' : '') + '>' + esc(dueText(b, true)) + '</span>' +
       '<div class="progress"><div style="width:' + pct + '%"></div></div>' +
-      '<span class="muted" style="font-size:12px">' + elapsed + ' of ~' + GESTATION_DAYS + ' days · ' + esc(lastLine) + '</span>' +
+      '<span class="muted" style="font-size:12px">' + (over ? 'Window passed ' + daysBetween(dueEnd(b), today()) + ' days ago — record the calf or mark didn’t take'
+        : elapsed + ' of ~' + GESTATION_DAYS + ' days' + (exposure ? ' since he went in' : '')) + ' · ' + esc(lastLine) + '</span>' +
       '<div class="btn-row"><a class="btn btn-accent" href="#/breeding/' + esc(b.id) + '/calve">Record calving</a>' +
       '<button type="button" class="btn btn-line" style="color:var(--on-surface);border-color:var(--on-surface-muted)" data-action="mark-open" data-id="' + esc(b.id) + '">Didn’t take</button></div></section>';
-  }
-
-  function bullStats(a) {
-    var yr = String(new Date().getFullYear());
-    var bred = S.db.Breedings.filter(function (b) { return b.bull_id === a.id && String(b.bred_date).slice(0, 4) === yr; });
-    var sired = S.db.Animals.filter(function (x) { return x.sire_id === a.id; }).length;
-    var months = bred.map(function (b) { return parseD(b.bred_date); }).filter(Boolean).map(function (d) { return d.getMonth(); });
-    var season = '—';
-    if (months.length) {
-      var mn = Math.min.apply(null, months), mx = Math.max.apply(null, months);
-      var name = function (m) { return new Date(2000, m, 1).toLocaleDateString('en-US', { month: 'short' }); };
-      season = mn === mx ? name(mn) : name(mn) + '–' + name(mx);
-    }
-    return { bred: bred.length, sired: sired, season: season, yr: yr };
-  }
-  function bullStatsCard(a) {
-    var s = bullStats(a);
-    var cows = pendingBreedings().filter(function (b) { return b.bull_id === a.id; });
-    return '<section class="card"><h2 class="sec-title">Breeding</h2><div class="mini-stats">' +
-      '<div><b>' + s.bred + '</b><span>Bred ' + s.yr + '</span></div><div><b>' + s.sired + '</b><span>Calves sired</span></div>' +
-      '<div><b>' + esc(s.season) + '</b><span>With cows</span></div></div>' +
-      (cows.length ? '<div class="sub-list"><span class="hint" style="padding-bottom:6px">Cows expecting his calves</span>' + cows.map(function (b) {
-        var cow = byId('Animals', b.cow_id);
-        return '<a href="#/animal/' + esc(b.cow_id) + '"><span>' + esc(tagName(cow)) + '</span><span class="when">Due ' + esc(fmtDate(expected(b))) + '</span></a>';
-      }).join('') + '</div>' : '') + '</section>';
   }
 
   // ==========================================================================
   // Screen: add / edit animal (cattle form, or bull form from the Bulls page)
   // ==========================================================================
+  function breedPicker(current) {
+    var used = [];
+    S.db.Animals.forEach(function (x) { if (x.breed && BREED_OPTIONS.indexOf(x.breed) < 0 && used.indexOf(x.breed) < 0) used.push(x.breed); });
+    var choices = BREED_OPTIONS.concat(used);
+    var picked = current ? (choices.indexOf(current) >= 0 ? current : '__other') : '';
+    return '<fieldset class="field"><legend class="lbl">Breed</legend><div class="opts wrap breeds">' +
+      opts('breed_pick', choices.concat(['__other']), picked, choices.concat(['+ Add your own'])) + '</div>' +
+      '<input class="inp" name="breed_other" data-show-when="breed_pick:__other" value="' + esc(picked === '__other' ? current : '') + '" placeholder="Type the breed"></fieldset>';
+  }
+  function parentPicker(kind, a) {
+    var isDam = kind === 'dam';
+    var pool = isDam ? S.db.Animals.filter(function (x) { return canBreed(x) && x.id !== a.id; }) : bulls().filter(function (x) { return x.id !== a.id; });
+    var list = pool.sort(byTag).map(function (x) { return { value: x.id, label: tagName(x) + (isActive(x) ? '' : ' (' + st(x).toLowerCase() + ')') }; });
+    var id = a[kind + '_id'], typed = a[kind + '_name'];
+    var sel = id || (typed ? '__other' : '');
+    list.push({ value: '__other', label: 'Not in the app — type a name' });
+    return '<label class="field"><span class="lbl">' + (isDam ? 'Dam (mother)' : 'Sire (father)') + '</span><select class="inp" name="' + kind + '_id">' +
+      selectOpts(list, sel, 'Unknown') + '</select></label>' +
+      '<label class="field" data-show-when="' + kind + '_id:__other"><span class="lbl">' + (isDam ? 'Dam' : 'Sire') + '’s name or tag</span>' +
+      '<input class="inp" name="' + kind + '_name" value="' + esc(typed) + '" placeholder="e.g. Old Bessie #12"></label>';
+  }
   function viewAnimalForm(id, q, asBull) {
     var a = id ? byId('Animals', id) : null;
     if (id && !a) return viewNotFound('That animal isn’t here anymore.');
@@ -1016,16 +1094,12 @@
     a = a || { sex: bull ? 'Bull' : 'Cow', status: 'In herd', origin: bull ? 'Purchased' : 'Born on farm' };
     var title = id ? 'Edit ' + dispName(a) : (bull ? 'New bull' : 'New animal');
     var cancel = id ? '#/animal/' + esc(id) : (bull ? '#/bulls' : '#/herd');
-    var breeds = COMMON_BREEDS.slice();
-    S.db.Animals.forEach(function (x) { if (x.breed && breeds.indexOf(x.breed) < 0) breeds.push(x.breed); });
-    var dams = S.db.Animals.filter(function (x) { return canBreed(x) && x.id !== a.id; }).sort(byTag)
-      .map(function (x) { return { value: x.id, label: tagName(x) + (isActive(x) ? '' : ' (' + st(x).toLowerCase() + ')') }; });
-    var sires = bulls().filter(function (x) { return x.id !== a.id; }).sort(byTag)
-      .map(function (x) { return { value: x.id, label: tagName(x) + (isActive(x) ? '' : ' (' + st(x).toLowerCase() + ')') }; });
     var photoSrc = formPhoto ? 'data:image/jpeg;base64,' + formPhoto : '';
-    var statuses = bull ? BULL_STATUSES : CATTLE_STATUSES;
+    var withCows = bull && st(a) === 'With cows';
+    var calv = id ? S.db.Calvings.find(function (c) { return c.calf_id === id; }) : null;
+    var calvB = calv ? byId('Breedings', calv.breeding_id) : null;
 
-    return '<div class="screen">' + formHeader(title, 'f-animal', cancel) +
+    var html = '<div class="screen">' + formHeader(title, 'f-animal', cancel) +
       '<form id="f-animal" class="form" data-form="animal" data-id="' + esc(id || '') + '" data-bull="' + (bull ? '1' : '') + '" novalidate>' +
       (!id ? '<div class="photo-pick' + (photoSrc ? ' has-img' : '') + '" id="form-photo">' +
         (photoSrc ? '<img alt="" src="' + photoSrc + '">' : '') + I.camera +
@@ -1036,34 +1110,56 @@
       '<input class="inp tag-inp" name="tag" value="' + esc(a.tag) + '" autocomplete="off" autocapitalize="characters" placeholder="None yet"></label>' +
       '<label class="field"><span class="lbl">Name (optional)</span><input class="inp" name="name" value="' + esc(a.name) + '" placeholder="e.g. Daisy"></label></div>' +
       '<span class="hint" style="margin-top:-10px">Leave the tag blank until it’s tagged. If a tag is lost and replaced, just type the new one — the old one is kept.</span>' +
+      breedPicker(a.breed);
 
-      '<label class="field"><span class="lbl">Breed</span><input class="inp" name="breed" list="breed-list" value="' + esc(a.breed) + '" placeholder="Start typing…">' +
-      '<datalist id="breed-list">' + breeds.map(function (b) { return '<option value="' + esc(b) + '">'; }).join('') + '</datalist></label>' +
+    if (bull) {
+      html += '<input type="hidden" name="sex" value="Bull"><input type="hidden" name="origin" value="Purchased">' +
+        '<label class="field"><span class="lbl">Status</span><select class="inp" name="status">' +
+        selectOpts(BULL_STATUSES.filter(function (s) { return s !== 'With cows' || withCows; }).map(function (s) { return { value: s, label: statusLabel(s, a) }; }), st(a)) + '</select>' +
+        '<span class="hint">Put him in or take him out with the 🐂 buttons on his profile — that logs his dates.</span></label>';
+      if (!id) {
+        html += '<label class="check"><input type="checkbox" name="in_now" value="yes"><span>He’s in with the cows now</span></label>' +
+          '<div class="grid-2" data-show-when="in_now:yes">' + dateField('start_date', 'Went in on', today(), { max: today() }) +
+          moneyField('fee', 'Season fee', '', 'Lease / service cost') + '</div>';
+      }
+      if (withCows) {
+        html += '<div data-show-when="status:In herd|Ready burger|Harvested|Sold|Deceased">' + dateField('end_date', 'Came out on', today(), { max: today() }) + '</div>';
+      }
+    } else {
+      html += '<fieldset class="field"><legend class="lbl">Sex</legend><div class="opts">' + opts('sex', SEXES, a.sex) + '</div></fieldset>' +
+        '<fieldset class="field" data-show-when="sex:Calf"><legend class="lbl">Calf is a…</legend><div class="opts">' +
+        opts('calf_sex', ['Heifer', 'Bull'], a.calf_sex || 'Heifer', ['Heifer calf', 'Bull calf']) + '</div></fieldset>' +
+        '<label class="field"><span class="lbl">Birth date</span><input class="inp" type="date" name="birth_date" value="' + esc(a.birth_date) + '" max="' + today() + '">' +
+        '<span class="hint" id="age-hint"></span></label>' +
+        '<fieldset class="field"><legend class="lbl">Origin</legend><div class="opts">' + opts('origin', ORIGINS, origin(a)) + '</div></fieldset>' +
+        '<div data-show-when="origin:Purchased" class="sub-fields">' +
+        '<label class="check"><input type="checkbox" name="offsite" value="yes"' + (isOffsite(a) ? ' checked' : '') + '><span><strong>Offsite</strong> — bought to go straight to the butcher, not part of the herd</span></label>' +
+        moneyField('purchase_price', 'Purchase price', a.purchase_price) +
+        '<div data-show-when="offsite:">' + dateField('joined_date', 'Date added to herd', a.joined_date, { max: today(), todayBtn: true }) + '</div></div>' +
+        '<section class="card" id="lineage" data-show-when="offsite:"><h2 class="sec-title">Lineage</h2>' +
+        parentPicker('dam', a) + parentPicker('sire', a) +
+        (calvB ? '<span class="hint">From the calving record: ' + esc(tagName(byId('Animals', calvB.cow_id))) + ' × ' + esc(bullLabel(calvB)) + '. Change it here if that’s wrong.</span>'
+          : '<span class="hint">Filled in automatically when you record a calving. Set it by hand for animals you’re adding from before the app.</span>') +
+        '</section>' +
+        '<label class="field"><span class="lbl">Status</span><select class="inp" name="status">' +
+        selectOpts(CATTLE_STATUSES.map(function (s) { return { value: s, label: STATUS_INFO[s].label }; }), st(a)) + '</select>' +
+        '<span class="hint" data-show-when="offsite:yes">Offsite animals start as 🥩 Ready – Steak unless you pick 🍔.</span></label>';
+    }
 
-      (bull ? '<input type="hidden" name="sex" value="Bull">'
-        : '<fieldset class="field"><legend class="lbl">Sex</legend><div class="opts">' + opts('sex', SEXES, a.sex) + '</div></fieldset>' +
-          '<fieldset class="field" data-show-when="sex:Calf"><legend class="lbl">Calf is a…</legend><div class="opts">' +
-          opts('calf_sex', ['Heifer', 'Bull'], a.calf_sex || 'Heifer', ['Heifer calf', 'Bull calf']) + '</div></fieldset>') +
+    if (!id) {
+      html += '<section class="card"><h2 class="sec-title">Last ivermectin</h2><div class="grid-2">' +
+        dateField('iver_date', 'Date given', '', { max: today() }) +
+        '<label class="field"><span class="lbl">Dose</span><input class="inp" name="iver_dose" placeholder="e.g. 10 ml"></label></div>' +
+        '<span class="hint">Optional — leave blank if you don’t know. Later doses are logged from the profile.</span></section>';
+    }
 
-      '<label class="field"><span class="lbl">Birth date</span><input class="inp" type="date" name="birth_date" value="' + esc(a.birth_date) + '" max="' + today() + '">' +
-      '<span class="hint" id="age-hint"></span></label>' +
-
-      '<fieldset class="field"><legend class="lbl">Origin</legend><div class="opts">' + opts('origin', ORIGINS, origin(a), ['Born on farm', 'Purchased (offsite)']) + '</div></fieldset>' +
-      '<div data-show-when="origin:Purchased">' + dateField('joined_date', 'Date added to herd', a.joined_date, { max: today(), todayBtn: true }) + '</div>' +
-
-      '<section class="card" data-show-when="origin:Born on farm"><h2 class="sec-title">Lineage</h2>' +
-      '<label class="field"><span class="lbl">Dam (mother)</span><select class="inp" name="dam_id">' + selectOpts(dams, a.dam_id, 'Unknown') + '</select></label>' +
-      '<label class="field"><span class="lbl">Sire (father)</span><select class="inp" name="sire_id">' + selectOpts(sires, a.sire_id, 'Unknown') + '</select></label></section>' +
-
-      '<label class="field"><span class="lbl">Status</span><select class="inp" name="status">' +
-      selectOpts(statuses.map(function (s) { return { value: s, label: STATUS_INFO[s].label }; }), st(a)) + '</select></label>' +
-
-      '<label class="field"><span class="lbl">Notes</span><textarea class="inp" name="notes" rows="3" placeholder="Anything worth remembering">' + esc(a.notes) + '</textarea></label>' +
+    html += '<label class="field"><span class="lbl">Notes</span><textarea class="inp" name="notes" rows="3" placeholder="Anything worth remembering">' + esc(a.notes) + '</textarea></label>' +
       '<p class="form-err" role="alert"></p>' +
       '<button type="submit" class="btn btn-accent btn-block">Save</button>' +
       (id ? '<button type="button" class="btn btn-danger btn-block" data-action="delete-animal" data-id="' + esc(id) + '">Delete this animal</button>' +
         '<p class="hint" style="margin:-8px 0 0;text-align:center">Only for mistakes. Use Harvested, Sold or Deceased to keep the record.</p>' : '') +
       '</form></div>';
+    return html;
   }
 
   // ==========================================================================
@@ -1149,15 +1245,24 @@
   // ==========================================================================
   function breedingCard(b) {
     var cow = byId('Animals', b.cow_id) || { tag: '' };
-    var exp = expected(b);
-    var left = daysBetween(today(), exp);
-    var elapsed = daysBetween(b.bred_date, today()) || 0;
+    var exposure = isExposure(b);
+    var left = daysBetween(today(), dueStart(b));
+    var leftEnd = daysBetween(today(), dueEnd(b));
+    var start = bredOn(b);
+    var elapsed = daysBetween(start, today()) || 0;
     var pct = Math.max(0, Math.min(100, Math.round(elapsed / GESTATION_DAYS * 100)));
-    var days = left === null ? '—' : left >= 0 ? left + (left === 1 ? ' day' : ' days') : (-left) + ' over';
+    var over = isOverdue(b);
+    var days;
+    if (over) days = Math.abs(leftEnd) + ' days late';
+    else if (left === null) days = '—';
+    else if (left > 0) days = left + (left === 1 ? ' day' : ' days');
+    else if (exposure && leftEnd >= 0) days = 'Due now';
+    else days = (-left) + ' over';
     return '<article class="card b-card"><div class="b-top">' + earTag(cow.tag) +
       '<a class="row-main" href="#/animal/' + esc(cow.id || '') + '"><span class="row-title">' + esc(dispName(cow)) + '</span>' +
-      '<span class="row-sub">Bred to ' + esc(bullLabel(b)) + ' · ' + esc(fmtDate(b.bred_date)) + '</span></a>' +
-      '<div class="b-days' + (left !== null && left < 0 ? ' over' : '') + '"><b>' + days + '</b><span>Due ' + esc(fmtDate(exp)) + '</span></div></div>' +
+      '<span class="row-sub">' + (exposure ? 'With ' + esc(bullLabel(b)) + ' ' + esc(fmtDate(b.exposure_start)) + (b.exposure_end ? '–' + esc(fmtDate(b.exposure_end)) : ' – now')
+        : 'Bred to ' + esc(bullLabel(b)) + ' · ' + esc(fmtDate(b.bred_date))) + '</span></a>' +
+      '<div class="b-days' + (over || (left !== null && left < 0 && !exposure) ? ' over' : '') + '"><b>' + days + '</b><span>' + (exposure ? 'Window ' : 'Due ') + esc(dueText(b)) + '</span></div></div>' +
       '<div class="progress"><div style="width:' + pct + '%"></div></div>' +
       '<div class="btn-row"><a class="btn btn-dark btn-sm" href="#/breeding/' + esc(b.id) + '/calve">Record calving</a>' +
       '<button type="button" class="btn btn-line btn-sm" data-action="mark-open" data-id="' + esc(b.id) + '">Didn’t take</button></div></article>';
@@ -1173,29 +1278,33 @@
   }
   function viewBreeding() {
     var t = today();
-    var pend = pendingBreedings().sort(function (x, y) { return expected(x).localeCompare(expected(y)); });
-    var due = pend.filter(function (b) { var d = daysBetween(t, expected(b)); return d !== null && d <= DUE_SOON_DAYS; });
+    var pend = pendingBreedings().sort(function (x, y) { return dueStart(x).localeCompare(dueStart(y)); });
+    var overdue = pend.filter(isOverdue);
+    var due = pend.filter(function (b) { var d = daysBetween(t, dueStart(b)); return !isOverdue(b) && d !== null && d <= DUE_SOON_DAYS; });
     var open = openCows();
-    var tabs = [['due', 'Due soon · ' + due.length], ['bred', 'Bred · ' + pend.length], ['open', 'Open · ' + open.length]];
+    var tabs = [['due', 'Due · ' + due.length], ['bred', 'Bred · ' + pend.length], ['open', 'Open · ' + open.length], ['overdue', 'Late · ' + overdue.length]];
     var body;
     if (UI.breedTab === 'open') {
       body = open.length ? open.map(function (a) {
         var last = S.db.Calvings.filter(function (c) { return c.cow_id === a.id; })
           .sort(function (x, y) { return String(y.calving_date).localeCompare(String(x.calving_date)); })[0];
+        var h = nextHeat(a.id);
         return '<article class="card b-card"><div class="b-top">' + earTag(a.tag) +
           '<a class="row-main" href="#/animal/' + esc(a.id) + '"><span class="row-title">' + esc(dispName(a)) + '</span>' +
-          '<span class="row-sub">' + esc(a.sex) + ' · ' + esc(last ? 'last calved ' + fmtDate(last.calving_date, true) : 'no calvings recorded') + '</span></a></div>' +
-          '<a class="btn btn-dark btn-sm" href="#/breeding/new?cow=' + esc(a.id) + '">Log breeding</a></article>';
-      }).join('') : '<div class="empty"><b>No open cows</b>Every cow and heifer old enough is bred.</div>';
+          '<span class="row-sub">' + esc(a.sex) + ' · ' + esc(last ? 'last calved ' + fmtDate(last.calving_date, true) : 'no calvings recorded') + '</span></a>' +
+          (h ? '<div class="b-days"><b>' + esc(fmtDate(h.next)) + '</b><span>Next heat ≈</span></div>' : '') + '</div>' +
+          '<a class="btn btn-dark btn-sm" href="#/breeding/new?cow=' + esc(a.id) + '">Log heat or breeding</a></article>';
+      }).join('') : '<div class="empty"><b>No open cows</b>Every cow and heifer old enough is bred or in with a bull.</div>';
     } else {
-      var list = UI.breedTab === 'bred' ? pend : due;
-      body = list.length ? list.map(breedingCard).join('')
-        : '<div class="empty"><b>' + (UI.breedTab === 'bred' ? 'No cows bred yet' : 'Nobody due in the next ' + DUE_SOON_DAYS + ' days') +
-          '</b>Log a breeding with the yellow button.</div>';
+      var list = UI.breedTab === 'bred' ? pend : UI.breedTab === 'overdue' ? overdue : due;
+      var emptyMsg = UI.breedTab === 'bred' ? ['No cows bred yet', 'Put a bull in with the cows from the Bulls page, or log a breeding with the yellow button.']
+        : UI.breedTab === 'overdue' ? ['Nobody is late', 'Cows show up here when their calving window has passed by ' + OVERDUE_GRACE + ' days with no calf recorded.']
+        : ['Nobody due in the next ' + DUE_SOON_DAYS + ' days', 'Log a breeding with the yellow button.'];
+      body = list.length ? list.map(breedingCard).join('') : '<div class="empty"><b>' + emptyMsg[0] + '</b>' + emptyMsg[1] + '</div>';
     }
     return '<div class="screen"><header class="hdr"><div class="hdr-titles"><span class="eyebrow">Season ' + new Date().getFullYear() +
       '</span><h1 class="h1">Breeding &amp; Calving</h1></div>' +
-      '<div class="seg-dark" role="group" aria-label="Breeding views">' + tabs.map(function (tb) {
+      '<div class="seg-dark tight" role="group" aria-label="Breeding views">' + tabs.map(function (tb) {
         return '<button type="button" class="' + (UI.breedTab === tb[0] ? 'on' : '') + '" aria-pressed="' + (UI.breedTab === tb[0]) + '" data-action="breed-tab" data-v="' + tb[0] + '">' + tb[1] + '</button>';
       }).join('') + '</div></header>' +
       '<div id="sync-banner">' + bannerHTML() + '</div>' +
@@ -1206,20 +1315,21 @@
   function viewBreedingForm(q) {
     var cows = S.db.Animals.filter(function (a) { return canBreed(a) && isActive(a); }).sort(byTag)
       .map(function (a) { return { value: a.id, label: tagName(a) }; });
-    var bullList = bulls().filter(function (a) { return st(a) === 'In herd'; }).sort(byTag).map(function (a) { return { value: a.id, label: tagName(a) }; });
-    return '<div class="screen">' + formHeader('Log breeding', 'f-breed', '#/breeding') +
+    var bullList = bulls().filter(isActive).sort(byTag).map(function (a) { return { value: a.id, label: tagName(a) }; });
+    return '<div class="screen">' + formHeader('Log heat / breeding', 'f-breed', '#/breeding') +
       '<form id="f-breed" class="form" data-form="breeding" novalidate>' +
       '<label class="field"><span class="lbl">Cow or heifer *</span><select class="inp" name="cow_id" required>' +
       selectOpts(cows, q.cow || '', 'Choose…') + '</select></label>' +
-      '<fieldset class="field"><legend class="lbl">Method</legend><div class="opts">' + opts('method', ['Natural', 'AI'], 'Natural', ['Bull', 'AI']) + '</div></fieldset>' +
+      '<fieldset class="field"><legend class="lbl">What happened</legend><div class="opts">' +
+      opts('method', ['Heat', 'Natural', 'AI'], 'Heat', ['Heat seen', 'Bred · bull', 'Bred · AI']) + '</div></fieldset>' +
       '<label class="field" data-show-when="method:Natural"><span class="lbl">Bull</span><select class="inp" name="bull_id">' +
       selectOpts(bullList, bullList.length === 1 ? bullList[0].value : '', 'Choose…') + '</select>' +
       (bullList.length ? '' : '<span class="hint">No bulls yet — add them on the Bulls page.</span>') + '</label>' +
       '<label class="field" data-show-when="method:AI"><span class="lbl">AI sire / straw</span><input class="inp" name="ai_sire" placeholder="Bull name or straw code"></label>' +
       '<p class="warn" id="rel-warn" hidden></p>' +
-      '<div class="grid-2"><label class="field"><span class="lbl">Heat seen</span><input class="inp" type="date" name="heat_date"></label>' +
-      '<label class="field"><span class="lbl">Bred on *</span><input class="inp" type="date" name="bred_date" value="' + today() + '" max="' + today() + '" required></label></div>' +
-      '<div class="info">' + I.cal + '<span id="exp-text">Expected calving: —</span></div>' +
+      '<div class="grid-2"><label class="field"><span class="lbl">Heat seen</span><input class="inp" type="date" name="heat_date" value="' + today() + '" max="' + today() + '"></label>' +
+      '<label class="field" data-show-when="method:Natural|AI"><span class="lbl">Bred on *</span><input class="inp" type="date" name="bred_date" value="' + today() + '" max="' + today() + '"></label></div>' +
+      '<div class="info">' + I.cal + '<span id="exp-text">—</span></div>' +
       '<label class="field"><span class="lbl">Notes</span><textarea class="inp" name="notes" rows="2"></textarea></label>' +
       '<p class="form-err" role="alert"></p>' +
       '<button type="submit" class="btn btn-accent btn-block">Save</button></form></div>';
@@ -1230,16 +1340,17 @@
     if (!b) return viewNotFound('That breeding record isn’t here anymore.');
     var cow = byId('Animals', b.cow_id) || {};
     var bull = byId('Animals', b.bull_id);
-    var breed = cow.breed && bull && bull.breed ? (cow.breed === bull.breed ? cow.breed : cow.breed + ' × ' + bull.breed) : (cow.breed || '');
+    var breed = cow.breed && bull && bull.breed ? (cow.breed === bull.breed ? cow.breed : 'Mix') : (cow.breed || '');
     return '<div class="screen">' + formHeader('Record calving', 'f-calve', '#/breeding') +
       '<form id="f-calve" class="form" data-form="calving" data-id="' + esc(b.id) + '" novalidate>' +
-      '<div class="info">' + I.info + '<span><strong>' + esc(tagName(cow)) + '</strong> × ' + esc(bullLabel(b)) + ' · bred ' + esc(fmtDate(b.bred_date, true)) + '</span></div>' +
+      '<div class="info">' + I.info + '<span><strong>' + esc(tagName(cow)) + '</strong> × ' + esc(bullLabel(b)) + ' · ' +
+      (isExposure(b) ? 'in together ' + esc(fmtDate(b.exposure_start, true)) + (b.exposure_end ? ' – ' + esc(fmtDate(b.exposure_end, true)) : '') : 'bred ' + esc(fmtDate(b.bred_date, true))) + '</span></div>' +
       '<label class="field"><span class="lbl">Calving date *</span><input class="inp" type="date" name="calving_date" value="' + today() + '" max="' + today() + '" required></label>' +
       '<fieldset class="field"><legend class="lbl">Calf</legend><div class="opts">' + opts('alive', ['yes', 'no'], 'yes', ['Born alive', 'Stillborn']) + '</div></fieldset>' +
       '<fieldset class="field"><legend class="lbl">Calf is a…</legend><div class="opts">' + opts('calf_sex', ['Heifer', 'Bull'], 'Heifer', ['Heifer calf', 'Bull calf']) + '</div></fieldset>' +
       '<div class="grid-2"><label class="field"><span class="lbl">Ear tag</span><input class="inp tag-inp" name="tag" autocomplete="off" autocapitalize="characters" placeholder="None yet"></label>' +
       '<label class="field"><span class="lbl">Name (optional)</span><input class="inp" name="name"></label></div>' +
-      '<label class="field"><span class="lbl">Breed</span><input class="inp" name="breed" value="' + esc(breed) + '"></label>' +
+      breedPicker(breed) +
       '<fieldset class="field"><legend class="lbl">How did it go?</legend><div class="opts wrap">' +
       opts('ease', ['Unassisted', 'Assisted', 'Hard pull', 'Vet / C-section'], 'Unassisted') + '</div></fieldset>' +
       '<label class="field"><span class="lbl">Notes</span><textarea class="inp" name="notes" rows="2"></textarea></label>' +
@@ -1249,28 +1360,119 @@
   }
 
   // ==========================================================================
-  // Screen: bulls (separate from the herd — they only connect through lineage)
+  // Bulls: stats, in/out periods with season fees
   // ==========================================================================
+  function bullStats(a) {
+    var yr = String(new Date().getFullYear());
+    var bred = S.db.Breedings.filter(function (b) { return b.bull_id === a.id && b.result !== 'Heat' && String(bredOn(b)).slice(0, 4) === yr; });
+    var sired = S.db.Animals.filter(function (x) { return x.sire_id === a.id; }).length;
+    var per = periodsFor(a.id).filter(function (p) { return String(p.start_date).slice(0, 4) === yr; });
+    var season = '—';
+    if (per.length) {
+      var m = function (d) { var x = parseD(d); return x ? x.toLocaleDateString('en-US', { month: 'short' }) : ''; };
+      var first = per[per.length - 1], last = per[0];
+      season = m(first.start_date) + '–' + (last.end_date ? m(last.end_date) : 'now');
+    }
+    return { bred: bred.length, sired: sired, season: season, yr: yr };
+  }
+  function periodCalves(p) {
+    var ids = {};
+    S.db.Breedings.forEach(function (b) { if (b.period_id === p.id) ids[b.id] = true; });
+    return S.db.Calvings.filter(function (c) { return ids[c.breeding_id]; }).length;
+  }
+  function periodCows(p) { return S.db.Breedings.filter(function (b) { return b.period_id === p.id; }).length; }
+  function bullStatsCard(a) {
+    var s = bullStats(a);
+    var cows = pendingBreedings().filter(function (b) { return b.bull_id === a.id; })
+      .sort(function (x, y) { return dueStart(x).localeCompare(dueStart(y)); });
+    return '<section class="card"><h2 class="sec-title">Breeding</h2><div class="mini-stats">' +
+      '<div><b>' + s.bred + '</b><span>Bred ' + s.yr + '</span></div><div><b>' + s.sired + '</b><span>Calves sired</span></div>' +
+      '<div><b>' + esc(s.season) + '</b><span>With cows ' + s.yr + '</span></div></div>' +
+      (cows.length ? '<div class="sub-list"><span class="hint" style="padding-bottom:6px">Cows expecting his calves</span>' + cows.map(function (b) {
+        var cow = byId('Animals', b.cow_id);
+        return '<a href="#/animal/' + esc(b.cow_id) + '"><span>' + esc(tagName(cow)) + '</span><span class="when">' + esc(dueText(b)) + '</span></a>';
+      }).join('') + '</div>' : '') + '</section>';
+  }
+  function bullPeriodsCard(a) {
+    var list = periodsFor(a.id);
+    var open = openPeriod(a.id);
+    return '<section class="card"><div class="card-head"><h2 class="sec-title">In with the cows</h2>' +
+      (open ? '<a class="btn btn-dark btn-sm" href="#/animal/' + esc(a.id) + '/period?to=In%20herd">Take him out</a>'
+        : (isActive(a) ? '<a class="btn btn-accent btn-sm" href="#/animal/' + esc(a.id) + '/period">🐂 Put him in</a>' : '')) + '</div>' +
+      (list.length ? '<div class="sub-list">' + list.map(function (p) {
+        var calves = periodCalves(p), cowsN = periodCows(p), fee = num(p.fee);
+        var sub = [cowsN + (cowsN === 1 ? ' cow' : ' cows'), calves + (calves === 1 ? ' calf' : ' calves')];
+        if (fee) sub.push(money(fee) + (calves ? ' · ' + money(fee / calves) + '/calf' : ''));
+        return '<a href="#/period/' + esc(p.id) + '"><span><strong>' + esc(fmtDate(p.start_date, true)) + ' – ' + (p.end_date ? esc(fmtDate(p.end_date, true)) : 'now') + '</strong>' +
+          '<br><span class="hint">' + esc(sub.join(' · ')) + '</span></span><span class="when">Edit</span></a>';
+      }).join('') + '</div>' : '<p class="hint" style="margin:0;font-size:14px">No dates logged yet. When he goes in with the cows, every cow and heifer in the herd gets a calving window on the Breeding page.</p>') +
+      '</section>';
+  }
+
   function viewBulls() {
     var all = bulls().sort(byTag);
     var act = all.filter(isActive), past = all.filter(function (a) { return !isActive(a); });
+    var inNow = act.filter(function (a) { return st(a) === 'With cows'; }).length;
     var cards = act.map(function (a) {
       var s = bullStats(a);
-      var added = origin(a) === 'Purchased' ? (a.joined_date ? 'Added ' + fmtMonth(a.joined_date) : 'Purchased') : 'Born on farm';
+      var op = openPeriod(a.id), last = periodsFor(a.id)[0];
+      var line = op ? 'In with the cows since ' + fmtDate(op.start_date) + (num(op.fee) ? ' · ' + money(op.fee) + ' fee' : '')
+        : last ? 'Last out ' + fmtDate(last.end_date, true) : 'Not in with the cows yet';
       return '<a class="card b-card" href="#/animal/' + esc(a.id) + '"><div class="b-top">' + thumb(a) +
         '<span class="row-main"><span class="row-title">' + esc(dispName(a)) + '</span>' +
-        '<span class="row-sub">' + esc([a.breed, ageText(a.birth_date, true)].filter(Boolean).join(' · ')) + '</span>' +
-        '<span class="row-sub">' + esc(added) + '</span></span>' + (st(a) !== 'In herd' ? statusPill(st(a)) : '') + '</div>' +
+        '<span class="row-sub">' + esc(a.breed || 'Bull') + '</span>' +
+        '<span class="row-sub">' + esc(line) + '</span></span>' + statusPill(st(a), a) + '</div>' +
         '<div class="mini-stats"><div><b>' + s.bred + '</b><span>Bred ' + s.yr + '</span></div><div><b>' + s.sired + '</b><span>Calves sired</span></div>' +
         '<div><b>' + esc(s.season) + '</b><span>With cows</span></div></div></a>';
     }).join('');
     return '<div class="screen"><header class="hdr"><div class="hdr-row"><div class="hdr-titles"><span class="eyebrow">' +
-      act.length + (act.length === 1 ? ' bull' : ' bulls') + ' in service</span><h1 class="h1">Bulls</h1></div>' +
+      act.length + (act.length === 1 ? ' bull' : ' bulls') + (inNow ? ' · ' + inNow + ' in with the cows' : '') + '</span><h1 class="h1">Bulls</h1></div>' +
       '<a class="btn btn-accent btn-pill btn-sm" href="#/bulls/add">' + I.plus + 'Add bull</a></div></header>' +
       '<div id="sync-banner">' + bannerHTML() + '</div>' +
       '<div class="content"><div class="list">' + (cards || '<div class="empty"><b>No bulls yet</b>Add the bulls that run with your cows so their calves link to them.</div>') + '</div>' +
       (past.length ? '<h2 class="section-title">Past bulls</h2><div class="list">' + past.map(animalRow).join('') + '</div>' : '') +
       '</div>' + nav('bulls') + '</div>';
+  }
+
+  /** Put a bull in (no ?to) or take him out (?to=<new status>). */
+  function viewPeriodChange(id, q) {
+    var a = byId('Animals', id);
+    if (!a || !isBull(a)) return viewNotFound('That bull isn’t here anymore.');
+    var op = openPeriod(a.id);
+    if (!q.to) {
+      var cows = exposableCows();
+      return '<div class="screen">' + formHeader('Put ' + dispName(a) + ' in', 'f-period', '#/animal/' + esc(a.id)) +
+        '<form id="f-period" class="form" data-form="period-start" data-id="' + esc(a.id) + '" novalidate>' +
+        dateField('start_date', 'Went in with the cows on *', today(), { max: today(), todayBtn: true }) +
+        moneyField('fee', 'Season fee', '', 'Lease, rental or service cost for this stretch — shows up as cost per calf.') +
+        '<div class="info">' + I.info + '<span><strong>' + cows.length + (cows.length === 1 ? ' cow or heifer' : ' cows and heifers') + '</strong> in the herd will be marked as with ' + esc(dispName(a)) +
+        ' and get a calving window on the Breeding page (283 days after he goes in to 283 days after he comes out).' +
+        (cows.length ? '<br><span class="hint">' + esc(cows.sort(byTag).map(function (c) { return c.tag || c.name || 'no tag'; }).join(', ')) + '</span>' : '') + '</span></div>' +
+        '<label class="field"><span class="lbl">Notes</span><textarea class="inp" name="notes" rows="2" placeholder="e.g. North pasture"></textarea></label>' +
+        '<p class="form-err" role="alert"></p><button type="submit" class="btn btn-accent btn-block">🐂 Put him in</button></form></div>';
+    }
+    var to = q.to;
+    var n = op ? S.db.Breedings.filter(function (b) { return b.period_id === op.id && (b.result || 'Pending') === 'Pending'; }).length : 0;
+    return '<div class="screen">' + formHeader('Take ' + dispName(a) + ' out', 'f-period', '#/animal/' + esc(a.id)) +
+      '<form id="f-period" class="form" data-form="period-end" data-id="' + esc(a.id) + '" data-to="' + esc(to) + '" novalidate>' +
+      '<div class="info">' + I.info + '<span>In since <strong>' + esc(op ? fmtDate(op.start_date, true) : '—') + '</strong>' +
+      (n ? ' · closes the calving window for ' + n + (n === 1 ? ' cow' : ' cows') : '') + '. New status: <strong>' + esc(statusLabel(to, a)) + '</strong></span></div>' +
+      dateField('end_date', 'Came out on *', today(), { max: today(), todayBtn: true }) +
+      '<p class="form-err" role="alert"></p><button type="submit" class="btn btn-accent btn-block">Save</button></form></div>';
+  }
+
+  function viewPeriodEdit(pid) {
+    var p = byId('BullPeriods', pid);
+    if (!p) return viewNotFound('Those dates aren’t here anymore.');
+    var a = byId('Animals', p.bull_id);
+    return '<div class="screen">' + formHeader('Dates with the cows', 'f-pedit', '#/animal/' + esc(p.bull_id)) +
+      '<form id="f-pedit" class="form" data-form="period-edit" data-id="' + esc(p.id) + '" novalidate>' +
+      '<div class="info">' + I.bull + '<span><strong>' + esc(a ? dispName(a) : 'Bull') + '</strong> · ' + periodCows(p) + ' cows · ' + periodCalves(p) + ' calves so far</span></div>' +
+      '<div class="grid-2">' + dateField('start_date', 'Went in *', p.start_date, { max: today() }) + dateField('end_date', 'Came out', p.end_date, { max: today() }) + '</div>' +
+      '<span class="hint" style="margin-top:-10px">Leave “Came out” blank if he’s still in. Changing dates updates every cow’s calving window.</span>' +
+      moneyField('fee', 'Season fee', p.fee) +
+      '<label class="field"><span class="lbl">Notes</span><textarea class="inp" name="notes" rows="2">' + esc(p.notes) + '</textarea></label>' +
+      '<p class="form-err" role="alert"></p><button type="submit" class="btn btn-accent btn-block">Save</button></form></div>';
   }
 
   // ==========================================================================
@@ -1957,7 +2159,7 @@
   // Router
   // ==========================================================================
   function parseRoute() {
-    var h = location.hash.replace(/^#\/?/, '');
+    var h = location.hash.replace(/^#\/?/, '').replace(/#.*$/, '');
     var parts = h.split('?');
     var q = {};
     new URLSearchParams(parts[1] || '').forEach(function (v, k) { q[k] = v; });
@@ -1970,8 +2172,10 @@
         if (p[2] === 'edit') return { html: viewAnimalForm(p[1], q), form: true };
         if (p[2] === 'dose') return { html: viewDose(p[1]), form: true };
         if (p[2] === 'harvest') return { html: viewHarvest(p[1]), form: true };
+        if (p[2] === 'period') return { html: viewPeriodChange(p[1], q), form: true };
         return { html: viewAnimal(p[1]) };
       case 'photo': return { html: viewPhoto(p[1]), form: true };
+      case 'period': return { html: viewPeriodEdit(p[1]), form: true };
       case 'add': return { html: viewAnimalForm(null, q, false), form: true };
       case 'breeding':
         if (p[1] === 'new') return { html: viewBreedingForm(q), form: true };
@@ -2002,6 +2206,7 @@
     var fresh = key !== currentKey;
     if (fresh) { formPhoto = null; currentKey = key; }
     var r = route(parseRoute());
+    if (fresh && /#lineage$/.test(key)) setTimeout(function () { var l = document.getElementById('lineage'); if (l) l.scrollIntoView({ block: 'start' }); }, 30);
     currentIsForm = !!r.form;
     app.innerHTML = r.html;
     if (fresh) window.scrollTo(0, 0);
@@ -2041,15 +2246,18 @@
   function val(form, name) {
     var el = form.elements[name];
     if (!el) return '';
-    if (el instanceof RadioNodeList) return el.value || '';
+    if (el.type === 'checkbox') return el.checked ? el.value : '';
     return el.value || '';
   }
   function onFormInput(form, changed) {
-    form.querySelectorAll('[data-show-when]').forEach(function (el) {
-      var parts = el.getAttribute('data-show-when').split(':');
-      el.hidden = parts[1].split('|').indexOf(val(form, parts[0])) < 0;
-    });
     var kind = form.dataset.form;
+    if (kind === 'animal' && changed === 'origin' && val(form, 'origin') !== 'Purchased' && form.elements.offsite) form.elements.offsite.checked = false;
+    form.querySelectorAll('[data-show-when]').forEach(function (el) {
+      el.hidden = !el.getAttribute('data-show-when').split(';').every(function (cond) {
+        var i = cond.indexOf(':');
+        return cond.slice(i + 1).split('|').indexOf(val(form, cond.slice(0, i))) >= 0;
+      });
+    });
     if (kind === 'animal') {
       var h = document.getElementById('age-hint');
       var b = val(form, 'birth_date');
@@ -2062,9 +2270,11 @@
       if (pa) pa.textContent = td && a && a.birth_date ? esc(dispName(a)) + ' was ' + ageText(a.birth_date, false, td) + ' old' : '';
     }
     if (kind === 'breeding') {
-      var bred = val(form, 'bred_date');
+      var bred = val(form, 'bred_date'), heat = val(form, 'heat_date');
       var e = document.getElementById('exp-text');
-      if (e) e.innerHTML = 'Expected calving: <strong>' + (bred ? esc(fmtDate(addDays(bred, GESTATION_DAYS), true)) : '—') + '</strong> (~' + GESTATION_DAYS + ' days)';
+      if (e) e.innerHTML = val(form, 'method') === 'Heat'
+        ? 'Next heat ≈ <strong>' + (heat ? esc(fmtDate(addDays(heat, HEAT_CYCLE), true)) : '—') + '</strong> (' + HEAT_CYCLE + '-day cycle)'
+        : 'Expected calving: <strong>' + (bred ? esc(fmtDate(addDays(bred, GESTATION_DAYS), true)) : '—') + '</strong> (~' + GESTATION_DAYS + ' days)';
       var w = document.getElementById('rel-warn');
       var msg = val(form, 'method') === 'Natural' ? relatedness(val(form, 'cow_id'), val(form, 'bull_id')) : '';
       var cow = val(form, 'cow_id');
@@ -2129,31 +2339,97 @@
       var id = form.dataset.id;
       var existing = id ? byId('Animals', id) : null;
       var bull = form.dataset.bull === '1';
+      var breed = f.breed_pick === '__other' ? (f.breed_other || '') : (f.breed_pick || '');
+      var offsite = !bull && f.origin === 'Purchased' && f.offsite === 'yes';
+      var status = f.status;
+      if (offsite && ACTIVE.indexOf(status) >= 0 && status !== 'Ready burger') status = 'Ready steak';
       var dup = tagTaken(f.tag, id);
-      if (dup && ACTIVE.indexOf(f.status) >= 0) return formError(form, 'Tag ' + f.tag + ' is already used by ' + dispName(dup) + '.');
-      if (f.origin === 'Purchased' && !f.joined_date) return formError(form, 'Add the date it joined the herd.');
+      if (dup && ACTIVE.indexOf(status) >= 0) return formError(form, 'Tag ' + f.tag + ' is already used by ' + dispName(dup) + '.');
+      if (!bull && f.origin === 'Purchased' && !offsite && !f.joined_date) return formError(form, 'Add the date it joined the herd (or tick Offsite).');
+      if (f.purchase_price && !hasNum(f.purchase_price)) return formError(form, 'Purchase price should be a number.');
+      if (f.fee && !hasNum(f.fee)) return formError(form, 'The season fee should be a number.');
       var history = existing ? (existing.tag_history || '') : '';
       if (existing && existing.tag && existing.tag !== f.tag) {
         var list = history ? history.split(/,\s*/) : [];
         if (list.indexOf(existing.tag) < 0) list.unshift(existing.tag);
         history = list.join(', ');
       }
-      var bornHere = f.origin !== 'Purchased';
-      var row = {
-        id: id || uuid(), tag: f.tag, name: f.name, breed: f.breed,
-        sex: bull ? 'Bull' : f.sex, calf_sex: !bull && f.sex === 'Calf' ? (f.calf_sex || 'Heifer') : '',
-        birth_date: f.birth_date, status: f.status, origin: f.origin,
-        joined_date: bornHere ? '' : f.joined_date, lease_until: '',
-        dam_id: bornHere ? f.dam_id : '', sire_id: bornHere ? f.sire_id : '',
-        notes: f.notes, tag_history: history
-      };
+      var row = { id: id || uuid(), tag: f.tag, name: f.name, breed: breed, notes: f.notes, tag_history: history };
+      var changes = [];
+      if (bull) {
+        Object.assign(row, { sex: 'Bull', origin: 'Purchased', status: status });
+        var wasIn = existing && st(existing) === 'With cows';
+        if (!id && f.in_now === 'yes') {
+          if (!f.start_date) return formError(form, 'When did he go in with the cows?');
+          row.status = 'With cows';
+          changes = changes.concat(periodStartChanges(row, f.start_date, f.fee, ''));
+        } else if (wasIn && status !== 'With cows') {
+          changes = changes.concat(periodEndChanges(existing, f.end_date || today()));
+        }
+      } else {
+        var dam = f.dam_id === '__other' ? '' : f.dam_id, sire = f.sire_id === '__other' ? '' : f.sire_id;
+        Object.assign(row, {
+          sex: f.sex, calf_sex: f.sex === 'Calf' ? (f.calf_sex || 'Heifer') : '',
+          birth_date: f.birth_date, status: status, origin: f.origin, offsite: offsite ? 'yes' : '',
+          purchase_price: f.origin === 'Purchased' && f.purchase_price ? String(num(f.purchase_price)) : '',
+          joined_date: f.origin === 'Purchased' && !offsite ? f.joined_date : '', lease_until: '',
+          dam_id: offsite ? '' : dam, sire_id: offsite ? '' : sire,
+          dam_name: !offsite && f.dam_id === '__other' ? f.dam_name : '',
+          sire_name: !offsite && f.sire_id === '__other' ? f.sire_name : ''
+        });
+      }
+      if (!id && f.iver_date) {
+        changes.push({ table: 'Treatments', op: 'upsert', row: { id: uuid(), animal_id: row.id, date: f.iver_date, product: 'Ivermectin', dose: f.iver_dose } });
+      }
       var chain = Promise.resolve([]);
       if (!id && formPhoto) chain = photoChanges(row, formPhoto, today(), true);
       return chain.then(function (pch) {
         formPhoto = null;
-        var changes = [{ table: 'Animals', op: 'upsert', row: row }].concat(pch);
-        return commit(changes, { go: '#/animal/' + row.id, msg: id ? 'Saved' : dispName(row) + ' added' });
+        var all = [{ table: 'Animals', op: 'upsert', row: row }].concat(changes, pch);
+        return commit(all, { go: '#/animal/' + row.id, msg: id ? 'Saved' : dispName(row) + ' added' });
       });
+    },
+
+    'period-start': function (form) {
+      var f = fields(form);
+      var a = byId('Animals', form.dataset.id);
+      if (!a) return formError(form, 'That bull is gone.');
+      if (!f.start_date) return formError(form, 'When did he go in with the cows?');
+      if (f.fee && !hasNum(f.fee)) return formError(form, 'The season fee should be a number.');
+      var ch = [{ table: 'Animals', op: 'upsert', row: { id: a.id, status: 'With cows' } }].concat(periodStartChanges(a, f.start_date, f.fee, f.notes));
+      var n = ch.filter(function (c) { return c.table === 'Breedings'; }).length;
+      return commit(ch, { go: '#/animal/' + a.id, msg: dispName(a) + ' is in · ' + n + (n === 1 ? ' cow' : ' cows') + ' exposed' });
+    },
+
+    'period-end': function (form) {
+      var f = fields(form);
+      var a = byId('Animals', form.dataset.id);
+      if (!a) return formError(form, 'That bull is gone.');
+      if (!f.end_date) return formError(form, 'When did he come out?');
+      var op = openPeriod(a.id);
+      if (op && f.end_date < op.start_date) return formError(form, 'He can’t come out before he went in (' + fmtDate(op.start_date, true) + ').');
+      var to = form.dataset.to || 'In herd';
+      var row = { id: a.id, status: to };
+      if (to === 'Harvested') row.harvest_for = 'Burger';
+      var go = to === 'Harvested' || to === 'Sold' ? '#/animal/' + a.id + '/harvest' : '#/animal/' + a.id;
+      return commit([{ table: 'Animals', op: 'upsert', row: row }].concat(periodEndChanges(a, f.end_date)), { go: go, msg: dispName(a) + ' is out' });
+    },
+
+    'period-edit': function (form) {
+      var f = fields(form);
+      var p = byId('BullPeriods', form.dataset.id);
+      if (!p) return formError(form, 'Those dates are gone.');
+      if (!f.start_date) return formError(form, 'Enter the date he went in.');
+      if (f.end_date && f.end_date < f.start_date) return formError(form, 'He can’t come out before he went in.');
+      if (f.fee && !hasNum(f.fee)) return formError(form, 'The season fee should be a number.');
+      var ch = [{ table: 'BullPeriods', op: 'upsert', row: { id: p.id, start_date: f.start_date, end_date: f.end_date, fee: f.fee ? String(num(f.fee)) : '', notes: f.notes } }];
+      S.db.Breedings.forEach(function (b) {
+        if (b.period_id === p.id) ch.push({ table: 'Breedings', op: 'upsert', row: { id: b.id, exposure_start: f.start_date, exposure_end: f.end_date } });
+      });
+      var bull = byId('Animals', p.bull_id);
+      if (bull && !f.end_date && st(bull) !== 'With cows') ch.push({ table: 'Animals', op: 'upsert', row: { id: bull.id, status: 'With cows' } });
+      if (bull && f.end_date && st(bull) === 'With cows' && openPeriod(bull.id) && openPeriod(bull.id).id === p.id) ch.push({ table: 'Animals', op: 'upsert', row: { id: bull.id, status: 'In herd' } });
+      return commit(ch, { go: '#/animal/' + p.bull_id, msg: 'Dates saved' });
     },
 
     photo: function (form) {
@@ -2197,11 +2473,18 @@
     breeding: function (form) {
       var f = fields(form);
       if (!f.cow_id) return formError(form, 'Choose the cow or heifer.');
+      if (f.method === 'Heat') {
+        if (!f.heat_date) return formError(form, 'Enter the date you saw her in heat.');
+        UI.breedTab = 'open';
+        return commit([{ table: 'Breedings', op: 'upsert', row: {
+          id: uuid(), cow_id: f.cow_id, method: 'Heat', heat_date: f.heat_date, result: 'Heat', notes: f.notes
+        } }], { go: '#/breeding', msg: 'Heat logged · next ≈ ' + fmtDate(addDays(f.heat_date, HEAT_CYCLE)) });
+      }
       if (f.method === 'Natural' && !f.bull_id) return formError(form, 'Choose the bull, or switch to AI.');
       if (!f.bred_date) return formError(form, 'Enter the date she was bred.');
       var changes = [];
       var prev = pendingFor(f.cow_id);
-      if (prev) changes.push({ table: 'Breedings', op: 'upsert', row: { id: prev.id, result: 'Open' } });
+      if (prev) changes.push({ table: 'Breedings', op: 'upsert', row: { id: prev.id, result: isExposure(prev) ? 'Superseded' : 'Open' } });
       var notes = f.method === 'AI' && f.ai_sire ? 'AI sire: ' + f.ai_sire + (f.notes ? ' — ' + f.notes : '') : f.notes;
       changes.push({ table: 'Breedings', op: 'upsert', row: {
         id: uuid(), cow_id: f.cow_id, bull_id: f.method === 'Natural' ? f.bull_id : '', method: f.method,
@@ -2224,7 +2507,7 @@
       var calfId = uuid();
       var changes = [
         { table: 'Animals', op: 'upsert', row: {
-          id: calfId, tag: f.tag, name: f.name, breed: f.breed, sex: 'Calf', calf_sex: f.calf_sex || 'Heifer', birth_date: f.calving_date,
+          id: calfId, tag: f.tag, name: f.name, breed: f.breed_pick === '__other' ? (f.breed_other || '') : (f.breed_pick || ''), sex: 'Calf', calf_sex: f.calf_sex || 'Heifer', birth_date: f.calving_date,
           status: alive ? 'In herd' : 'Deceased', origin: 'Born on farm', dam_id: b.cow_id, sire_id: b.bull_id,
           notes: alive ? f.notes : ('Stillborn.' + (f.notes ? ' ' + f.notes : ''))
         } },
@@ -2302,10 +2585,15 @@
     },
     'status-filter': function (el) {
       var v = el.dataset.v;
-      UI.status = v === '' ? '' : (UI.status === v ? '' : v);
+      if (UI.sex === 'Offsite' || UI.sex === 'Past') { UI.sex = 'All'; UI.status = v; }
+      else UI.status = UI.status === v ? '' : v;
       render();
     },
-    'sex-filter': function (el) { UI.sex = el.dataset.v; render(); },
+    'sex-filter': function (el) {
+      UI.sex = el.dataset.v;
+      if (UI.sex === 'Offsite' || UI.sex === 'Past') UI.status = '';
+      render();
+    },
     'breed-tab': function (el) { UI.breedTab = el.dataset.v; render(); },
     'sales-tab': function (el) { UI.salesTab = el.dataset.v; render(); },
     'sales-mode': function (el) {
@@ -2359,6 +2647,8 @@
       var a = byId('Animals', el.dataset.id);
       var v = el.dataset.v;
       if (!a || st(a) === v) return;
+      if (isBull(a) && v === 'With cows') { location.hash = '#/animal/' + a.id + '/period'; return; }
+      if (isBull(a) && st(a) === 'With cows') { location.hash = '#/animal/' + a.id + '/period?to=' + encodeURIComponent(v); return; }
       if (v === 'Harvested' || v === 'Sold') {
         var row = { id: a.id, status: v };
         if (v === 'Harvested') row.harvest_for = a.harvest_for || (st(a) === 'Ready burger' || isBull(a) ? 'Burger' : 'Steak');
@@ -2432,6 +2722,28 @@
       persist().then(function () { currentKey = null; location.hash = ''; render(); });
     }
   };
+
+  /** A bull goes in: a period row + a pasture-exposure breeding for every eligible cow/heifer. */
+  function periodStartChanges(bull, start, fee, notes) {
+    var pid = uuid();
+    var ch = [{ table: 'BullPeriods', op: 'upsert', row: { id: pid, bull_id: bull.id, start_date: start, end_date: '', fee: fee ? String(num(fee)) : '', notes: notes || '' } }];
+    exposableCows().forEach(function (c) {
+      ch.push({ table: 'Breedings', op: 'upsert', row: {
+        id: uuid(), cow_id: c.id, bull_id: bull.id, method: 'Pasture', exposure_start: start, exposure_end: '', period_id: pid, result: 'Pending'
+      } });
+    });
+    return ch;
+  }
+  /** A bull comes out: close his open period and the calving windows it started. */
+  function periodEndChanges(bull, end) {
+    var op = openPeriod(bull.id);
+    if (!op) return [];
+    var ch = [{ table: 'BullPeriods', op: 'upsert', row: { id: op.id, end_date: end } }];
+    S.db.Breedings.forEach(function (b) {
+      if (b.period_id === op.id) ch.push({ table: 'Breedings', op: 'upsert', row: { id: b.id, exposure_end: end } });
+    });
+    return ch;
+  }
 
   function handlePhoto(input) {
     var file = input.files && input.files[0];

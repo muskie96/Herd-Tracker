@@ -310,7 +310,9 @@ legend { padding: 0 0 6px; }
 .hero-id .names { display: flex; flex-direction: column; gap: 4px; padding-top: 58px; min-width: 0; }
 .hero-id h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 40px; line-height: 1; overflow-wrap: anywhere; }
 /* Name: pine letters with a yellow outline and a soft drop shadow so it stands off the background */
-.animal-name { color: var(--surface); text-shadow: -2px -2px 0 var(--accent), 2px -2px 0 var(--accent), -2px 2px 0 var(--accent), 2px 2px 0 var(--accent), 0 -2px 0 var(--accent), 0 2px 0 var(--accent), -2px 0 0 var(--accent), 2px 0 0 var(--accent), 0 6px 12px rgba(22, 32, 26, .35); letter-spacing: .01em; }
+.hero-id h1.animal-name { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; font-weight: 400; font-size: 36px; line-height: 1.05; color: var(--surface); letter-spacing: .01em;
+  text-shadow: -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff, 2px 2px 0 #fff, 0 -2px 0 #fff, 0 2px 0 #fff, -2px 0 0 #fff, 2px 0 0 #fff,
+    -1px -2px 0 #fff, 1px -2px 0 #fff, -1px 2px 0 #fff, 1px 2px 0 #fff, 0 6px 14px rgba(22, 32, 26, .45); }
 .hero-id .meta { font-size: 14px; color: var(--muted); }
 
 /* ---------- Nav ---------- */
@@ -384,3 +386,20 @@ legend { padding: 0 0 6px; }
 
 .seg-light button { white-space: nowrap; font-size: 13px; padding: 0 4px; }
 @media (max-width: 380px) { .seg-light button { font-size: 12px; } }
+
+/* ---------- v1.3 additions ---------- */
+.stats.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stat.emo { flex-direction: row; align-items: center; justify-content: center; gap: 10px; min-height: 72px; padding: 10px 8px; }
+.stat.emo .stat-emo { font-size: 34px; line-height: 1; }
+.stat.emo b { font-size: 40px; color: var(--on-surface); }
+.stat.emo.on { background: var(--surface-3); }
+.emo-badge { flex: none; font-size: 30px; line-height: 1; width: 40px; text-align: center; }
+.chip-alt { border-style: dashed; }
+.chip-alt.on { border-style: solid; }
+.check { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--field-line); background: var(--card); font-size: 14px; line-height: 1.4; color: var(--ink-2); cursor: pointer; min-height: 48px; }
+.check input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--surface); }
+.sub-fields { display: flex; flex-direction: column; gap: 14px; padding-left: 12px; border-left: 3px solid var(--accent); }
+.seg-dark button { white-space: nowrap; }
+.seg-dark.tight button { font-size: 13px; padding: 0 2px; }
+.opts.breeds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sub-list a .hint { font-weight: 400; }
