@@ -800,7 +800,7 @@
   // ==========================================================================
   function viewSetup() {
     return '<div class="setup"><form class="setup-inner" data-form="setup" novalidate>' +
-      '<div>' + earTag('HT', 'lg') + '</div>' +
+      '<img class="setup-emblem" src="brand/emblem-color.png" alt="Musgrove Farms" width="280" height="200">' +
       '<div><h1 class="h1">Herd Tracker</h1></div>' +
       (S.authFailed
         ? '<p>The farm passcode was changed. Enter the new one to keep going — nothing on this phone was lost.</p>'
@@ -856,7 +856,8 @@
       : UI.status ? 'Showing ' + statusLabel(UI.status).replace(/^\S+ /, '').toLowerCase() + ' · tap the box again to show everyone'
       : 'Everyone in the herd · tap a box above to filter';
     return '<div class="screen">' +
-      '<header class="hdr"><div class="hdr-row"><div class="hdr-titles"><span class="eyebrow">Herd Tracker</span><h1 class="h1">The Herd</h1></div>' +
+      '<header class="hdr"><div class="hdr-row brand-row"><img class="emblem" src="brand/emblem-cream.png" alt="Musgrove Farms" width="94" height="74">' +
+      '<div class="hdr-titles"><span class="eyebrow">Herd Tracker</span><h1 class="h1">The Herd</h1></div>' +
       '<div class="hdr-side"><a class="icon-btn" href="#/settings" aria-label="Settings">' + I.gear + '</a>' +
       '<span class="sync-ind" id="sync-ind">' + syncIndHTML() + '</span></div></div>' +
       '<div class="stats three">' + HERD_TILES.map(function (t) {

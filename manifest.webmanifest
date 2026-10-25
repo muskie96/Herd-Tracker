@@ -1,13 +1,13 @@
 {
-  "name": "Herd Tracker",
-  "short_name": "Herd",
-  "description": "Track the herd, breeding, calving and sales.",
+  "name": "Musgrove Farms",
+  "short_name": "Musgrove",
+  "description": "Musgrove Farms herd, breeding, calving and sales tracker.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#1E2A23",
-  "theme_color": "#1E2A23",
+  "background_color": "#262422",
+  "theme_color": "#262422",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
