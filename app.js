@@ -1665,7 +1665,7 @@
     var s = stage(o);
     var a = byId('Animals', o.assigned_animal_id);
     var sub = ['Requested ' + fmtDate(requestDate(o))];
-    if (o.wanted_by && s === 'Waiting') sub.push('wants ' + o.wanted_by);
+    if (o.wanted_by && !/next available/i.test(o.wanted_by) && s === 'Waiting') sub.push('wants ' + o.wanted_by);
     var action = '';
     if (s === 'Waiting' && product(o) === 'Beef') action = '<a class="btn btn-accent btn-sm" style="flex:1" href="#/order/' + esc(o.id) + '/assign">Assign an animal</a>';
     else if (s === 'Waiting' || s === 'Assigned') action = '<a class="btn btn-dark btn-sm" style="flex:1" href="#/order/' + esc(o.id) + '?pay=1">Payments</a>';
@@ -1800,7 +1800,9 @@
         return '<a class="row" href="#/order/' + esc(o.id) + '"><span class="row-main"><span class="row-title">' + esc(product(o)) + ' · ' + esc(shareLabel(o)) + '</span>' +
           '<span class="row-sub">Requested ' + esc(fmtDate(requestDate(o), true)) + ' · ' + esc(stage(o) === 'Complete' ? 'paid ' + fmtDate(o.final_paid_date, true) : stage(o).toLowerCase()) + '</span></span>' +
           '<span class="pr-val"><b>' + (paidTotal(o) ? money(paidTotal(o)) : '—') + '</b></span></a>';
-      }).join('') + '</div></div>' + nav('sales') + '</div>';
+      }).join('') + '</div>' +
+      (isAdmin() ? '<button type="button" class="btn btn-danger btn-block" data-action="delete-customer" data-key="' + esc(key) + '">Delete this customer</button>' : '') +
+      '</div>' + nav('sales') + '</div>';
   }
 
   // ---------- Order form (new / edit, with both payments) ----------
@@ -1818,19 +1820,8 @@
     }
     var s = id ? stage(o) : 'Waiting';
     var y = new Date().getFullYear();
-    var wantOpts = ['Next available', 'Spring ' + (y + 1), 'Fall ' + y, 'Fall ' + (y + 1)];
     var shares = beef ? BEEF_SHARES : PORK_SHARES;
     var labels = beef ? ['🥩 Whole', '🥩 Half', '🥩 Quarter', '🍔 Burger'] : ['Whole hog', 'Half hog', 'Quarter hog'];
-    var steakAnimals = S.db.Animals.filter(function (a) { return st(a) === 'Ready steak' || a.id === o.assigned_animal_id; }).sort(byTag)
-      .map(function (a) {
-        var left = 1 - claimedHead(a.id, o.id);
-        return { value: a.id, label: tagName(a) + ' · ' + (left > 0 ? fmtHead(left) + ' left' : 'fully claimed'), kind: 'steak' };
-      });
-    var burgerAnimals = S.db.Animals.filter(function (a) { return isBurgerAnimal(a) || a.id === o.assigned_animal_id; }).sort(byTag)
-      .map(function (a) {
-        var left = hasNum(a.burger_lbs) && num(a.burger_lbs) ? lbs(Math.max(0, num(a.burger_lbs) - claimedLbs(a.id, o.id))) + ' left' : 'weight pending';
-        return { value: a.id, label: tagName(a) + ' · ' + left, kind: 'burger' };
-      });
     var sug = id ? suggestedTotal(o) : null;
     var depositAmt = depositPaid(o) ? num(o.deposit_amount) : 0;
     var waitingCount = S.db.Orders.filter(function (x) { return product(x) === prod && stage(x) === 'Waiting'; }).length;
@@ -1854,15 +1845,7 @@
       '<button type="button" data-action="qty" data-v="1" aria-label="More">+</button></div></div>' +
       (beef ? '<label class="field" data-show-when="share:Burger"><span class="lbl">How many lbs of burger? *</span>' +
         '<input class="inp" name="burger_lbs" inputmode="decimal" value="' + esc(o.burger_lbs) + '" placeholder="e.g. 25"></label>' : '') +
-      '<label class="field"><span class="lbl">Wanted by</span><input class="inp" name="wanted_by" list="want-list" value="' + esc(o.wanted_by || 'Next available') + '">' +
-      '<datalist id="want-list">' + wantOpts.map(function (w) { return '<option value="' + esc(w) + '">'; }).join('') + '</datalist></label></section>' +
-
-      (beef ? '<label class="field" data-show-when="share:Whole|Half|Quarter"><span class="lbl">Assign an animal (optional)</span><select class="inp" name="assigned_steak">' +
-        selectOpts(steakAnimals, o.assigned_animal_id, 'Not yet — keep on waitlist') + '</select>' +
-        '<span class="hint">Animals tagged 🥩 Ready – Steak.</span></label>' +
-        '<label class="field" data-show-when="share:Burger"><span class="lbl">Assign an animal (optional)</span><select class="inp" name="assigned_burger">' +
-        selectOpts(burgerAnimals, o.assigned_animal_id, 'Not yet — keep on waitlist') + '</select>' +
-        '<span class="hint">Animals tagged 🍔 Ready – Burger, or harvested for burger.</span></label>' : '') +
+      '</section>' +
 
       '<section class="card" id="payments"><h2 class="sec-title">Payments</h2>' +
       '<h3 class="pay-step"><span>1</span>Deposit</h3>' +
@@ -1884,7 +1867,7 @@
       '<button type="submit" class="btn btn-accent btn-block">Save</button>' +
       (id ? (s === 'Cancelled'
           ? '<button type="button" class="btn btn-line btn-block" data-action="order-reopen" data-id="' + esc(id) + '">Reopen order</button>'
-          : '<button type="button" class="btn btn-line btn-block" data-action="order-cancel" data-id="' + esc(id) + '">Cancel order</button>') +
+          : isAdmin() ? '<button type="button" class="btn btn-line btn-block" data-action="order-cancel" data-id="' + esc(id) + '">Cancel order</button>' : '') +
         (isAdmin() ? '<button type="button" class="btn btn-danger btn-block" data-action="delete-order" data-id="' + esc(id) + '">Delete this order</button>' : '') : '') +
       '</form></div>';
   }
@@ -2115,8 +2098,7 @@
     if (!hasNum(setting('price_hanging'))) missing.push('your price per lb hanging');
     if (!hasNum(setting('haul_auction'))) missing.push('haul cost to the auction');
     return '<form class="card" data-form="calc" novalidate><h2 class="sec-title">Butcher or auction?</h2>' +
-      (missing.length ? '<p class="warn">' + (isAdmin() ? 'Add ' + esc(missing.join(' and ')) + ' under <button type="button" class="link-inline" data-action="market-view" data-v="numbers">Our numbers</button> for a full comparison.'
-        : 'The admin hasn’t saved ' + esc(missing.join(' or ')) + ' yet.') + '</p>' : '') +
+      (missing.length ? '<p class="warn">Add ' + esc(missing.join(' and ')) + ' under <button type="button" class="link-inline" data-action="market-view" data-v="numbers">Our numbers</button> for a full comparison.</p>' : '') +
       '<label class="field"><span class="lbl">Animal (optional)</span><select class="inp" name="animal">' + selectOpts(animals, '', 'Just estimating') + '</select></label>' +
       '<fieldset class="field"><legend class="lbl">Sell to customers as</legend><div class="opts">' + opts('sell_as', ['Steak', 'Burger'], 'Steak', ['🥩 Steak shares', '🍔 Burger']) + '</div></fieldset>' +
       '<fieldset class="field"><legend class="lbl">Auction class</legend><div class="opts">' + opts('cls', ['Steer', 'Heifer', 'Cow', 'Bull'], 'Steer') + '</div></fieldset>' +
@@ -2210,8 +2192,7 @@
 
   function viewMarket() {
     var run = S.meta && S.meta.pricesRun;
-    var views = [['prices', 'Prices'], ['compare', 'Compare']].concat(isAdmin() ? [['numbers', 'Our numbers']] : []);
-    if (UI.marketView === 'numbers' && !isAdmin()) UI.marketView = 'prices';
+    var views = [['prices', 'Prices'], ['compare', 'Compare'], ['numbers', 'Our numbers']];
     var body = UI.marketView === 'compare' ? calcHTML() : UI.marketView === 'numbers' ? numbersHTML() : marketPricesHTML();
     return '<div class="screen"><header class="hdr"><div class="hdr-row"><div class="hdr-titles"><span class="eyebrow">' +
       (run && run.at ? 'Prices checked ' + esc(relTime(run.at)) : 'Auction prices') + '</span><h1 class="h1">Market</h1></div>' +
@@ -2568,10 +2549,10 @@
       '<button type="submit" class="btn btn-line">Save name</button></form>' +
       (isAdmin()
         ? '<section class="card"><h2 class="sec-title">Signed-in devices</h2><div id="device-list">' + (UI.devices ? devicesHTML(UI.devices) : '<p class="hint" style="margin:0">Loading…</p>') + '</div>' +
-          '<p class="hint" style="margin:0">Remove any device you don’t recognize. Changing an access code in the Sheet’s script (and deploying) signs out every device that used it.</p></section>' +
-          '<section class="card"><h2 class="sec-title">Prices &amp; butcher</h2><p class="hint" style="margin:0;font-size:14px">Haul cost, your prices, deposits and the butcher’s rates live on the Market tab under Our numbers.</p>' +
-          '<a class="btn btn-line" href="#/market" data-action="market-view" data-v="numbers">Open Our numbers</a></section>'
-        : '<section class="card"><h2 class="sec-title">Admin settings</h2><p class="hint" style="margin:0;font-size:14px">Devices, prices and deleting records are managed by the farm admin.</p></section>') +
+          '<p class="hint" style="margin:0">Remove any device you don’t recognize. Changing an access code in the Sheet’s script (and deploying) signs out every device that used it.</p></section>'
+        : '<section class="card"><h2 class="sec-title">Admin</h2><p class="hint" style="margin:0;font-size:14px">This device can add and edit everything. Signed-in devices, deleting animals, bulls and customers, and taking orders off the waitlist are handled by the farm admin.</p></section>') +
+      '<section class="card"><h2 class="sec-title">Prices &amp; butcher</h2><p class="hint" style="margin:0;font-size:14px">Haul cost, your prices, deposits and the butcher’s rates live on the Market tab under Our numbers.</p>' +
+      '<a class="btn btn-line" href="#/market" data-action="market-view" data-v="numbers">Open Our numbers</a></section>' +
       '<section class="card"><h2 class="sec-title">Install tips</h2>' +
       '<p class="hint" style="margin:0;font-size:14px;line-height:1.5"><strong>iPhone:</strong> open in Safari → Share → Add to Home Screen.<br><strong>Android:</strong> open in Chrome → ⋮ menu → Add to Home screen (or Install app).</p></section>' +
       '<section class="card"><h2 class="sec-title">Sign out</h2><p class="hint" style="margin:0;font-size:14px;line-height:1.5">Signs this device out and clears its copy of the herd. The Google Sheet is not touched.</p>' +
@@ -2990,7 +2971,9 @@
       if (f.deposit_amount && !hasNum(f.deposit_amount)) return formError(form, 'The deposit amount should be a number.');
       if (f.final_amount && !hasNum(f.final_amount)) return formError(form, 'The final payment should be a number.');
       if (f.final_paid_date && !f.final_amount) return formError(form, 'Enter the final payment amount.');
-      var assigned = f.product === 'Beef' ? (burger ? f.assigned_burger : f.assigned_steak) || '' : '';
+      // Animals are assigned from the waitlist (Assign an animal), not on this form. Editing keeps the current one
+      // unless the order switched between steak and burger.
+      var assigned = existing && existing.assigned_animal_id && f.product === 'Beef' && isBurger(existing) === burger ? existing.assigned_animal_id : '';
       var qty = burger ? 1 : Math.max(1, parseInt(f.quantity, 10) || 1);
       var status = existing && existing.status === 'Cancelled' ? 'Cancelled'
         : f.final_paid_date ? 'Complete' : assigned ? 'Assigned' : 'Waiting';
@@ -2998,12 +2981,13 @@
         id: id || uuid(), product: f.product, first_name: f.first_name, last_name: f.last_name,
         name: [f.first_name, f.last_name].filter(Boolean).join(' '),
         phone: f.phone, email: f.email, request_date: f.request_date || today(),
-        share: f.share, quantity: qty, burger_lbs: burger ? String(num(f.burger_lbs)) : '', wanted_by: f.wanted_by,
+        share: f.share, quantity: qty, burger_lbs: burger ? String(num(f.burger_lbs)) : '',
         deposit_amount: f.deposit_amount ? String(num(f.deposit_amount)) : '', deposit_paid_date: f.deposit_paid_date,
         deposit_status: f.deposit_paid_date ? 'Paid' : 'Not yet',
         final_amount: f.final_amount ? String(num(f.final_amount)) : '', final_paid_date: f.final_paid_date,
         assigned_animal_id: assigned, status: status, notes: f.notes
       };
+      if (status === 'Cancelled' && !isAdmin()) delete row.status;   // already cancelled; farm devices can still fix details
       UI.salesMode = f.product; lsSet('herd.salesMode', f.product);
       UI.salesTab = status === 'Assigned' ? 'assigned' : status === 'Waiting' ? 'waiting' : 'archive';
       return commit([{ table: 'Orders', op: 'upsert', row: row }], {
@@ -3169,6 +3153,12 @@
       var a = byId('Animals', el.dataset.id);
       if (!a || !confirm('Delete ' + dispName(a) + ' completely? This can’t be undone. (To keep the record, set the status to Harvested, Sold or Deceased instead.)')) return;
       commit([{ table: 'Animals', op: 'delete', row: { id: a.id } }], { go: isBull(a) ? '#/bulls' : '#/herd', msg: 'Deleted' });
+    },
+    'delete-customer': function (el) {
+      var list = S.db.Orders.filter(function (o) { return custKey(o) === el.dataset.key; });
+      if (!list.length) return;
+      if (!confirm('Delete ' + fullName(list[0]) + ' and all ' + list.length + (list.length === 1 ? ' order' : ' orders') + ' (including paid ones in the archive)? This can’t be undone.')) return;
+      commit(list.map(function (o) { return { table: 'Orders', op: 'delete', row: { id: o.id } }; }), { go: '#/customers', msg: 'Customer deleted' });
     },
     'delete-order': function (el) {
       var o = byId('Orders', el.dataset.id);
