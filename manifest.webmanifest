@@ -1,6 +1,6 @@
 {
   "name": "Musgrove Farms",
-  "short_name": "Musgrove",
+  "short_name": "Musgrove Farms",
   "description": "Musgrove Farms herd, breeding, calving and sales tracker.",
   "start_url": "./",
   "scope": "./",

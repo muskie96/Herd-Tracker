@@ -689,3 +689,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .more-pop a:hover, .more-pop a:focus-visible { background: var(--base); outline: none; }
 .more-pop .hint { padding: 6px 10px 10px; }
 @media (prefers-reduced-motion: no-preference) { .more-pop { animation: morepop .14s ease-out; } @keyframes morepop { from { opacity: 0; transform: translateY(6px); } } }
+/* v1.12.2: bright cattle-tag yellow ear tags */
+:root { --tag-yellow: #F7C600; --tag-yellow-edge: #D4A600; }
+.tag { background: var(--tag-yellow); box-shadow: inset 0 0 0 1px var(--tag-yellow-edge); }
+.tag.sm { box-shadow: inset 0 0 0 1px var(--tag-yellow-edge), 0 0 0 2px var(--card); }
+.tag.md { box-shadow: inset 0 0 0 1px var(--tag-yellow-edge), 0 2px 6px rgba(28, 26, 23, .18); }
+.tag.lg { box-shadow: inset 0 0 0 2px var(--tag-yellow-edge), 0 0 0 3px var(--surface), 0 0 0 6px var(--base), 0 10px 20px rgba(28, 26, 23, .35); }
+.tag.notag { background: var(--sunk); box-shadow: none; }
+.inp.tag-inp { border: 2px solid var(--tag-yellow-edge); background: #FFF4C2; }
