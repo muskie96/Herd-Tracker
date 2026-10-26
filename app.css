@@ -670,3 +670,6 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .breed-x { display: flex; flex-direction: column; gap: 4px; padding-right: 84px; }
 .breed-x-l { font-size: 13px; font-weight: 600; color: var(--muted); }
 .breed-x[hidden], .breed-field .hint[hidden] { display: none; }
+.inv-row { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.inv-row:first-of-type { border-top: 0; padding-top: 0; }
+.order-no { margin: 0; font-family: var(--display); font-weight: 700; font-size: 18px; color: var(--accent-ink); letter-spacing: .02em; }
