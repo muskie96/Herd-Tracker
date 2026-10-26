@@ -673,3 +673,19 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .inv-row { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .inv-row:first-of-type { border-top: 0; padding-top: 0; }
 .order-no { margin: 0; font-family: var(--display); font-weight: 700; font-size: 18px; color: var(--accent-ink); letter-spacing: .02em; }
+/* v1.12 More button + pop-out menu (bottom bar and computer left menu) */
+.nav .nav-more { border: 0; background: none; padding: 0; min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--muted); font-size: 10.5px; font-weight: 600; min-width: 0; font-family: inherit; }
+.nav .nav-more svg { width: 24px; height: 24px; }
+.nav .nav-more.on, .nav .nav-more[aria-expanded="true"] { color: var(--red); }
+.side-nav .nav-more { border: 0; background: none; font: inherit; text-align: left; width: 100%; display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 0 12px; border-radius: 10px; font-weight: 600; font-size: 15px; color: var(--ink-2); cursor: pointer; }
+.side-nav .nav-more svg { width: 20px; height: 20px; color: var(--muted); flex: none; }
+.side-nav .nav-more:hover, .side-nav .nav-more[aria-expanded="true"] { background: var(--base); }
+.side-nav .nav-more.on { background: var(--surface); color: var(--on-surface); }
+.side-nav .nav-more.on svg { color: var(--accent); }
+.more-pop { position: fixed; z-index: 35; min-width: 210px; max-width: calc(100vw - 16px); max-height: min(70vh, 520px); overflow-y: auto; background: var(--card); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 14px; box-shadow: 0 14px 34px rgba(28, 26, 23, .22); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.more-pop .more-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 6px 10px 4px; }
+.more-pop a { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 0 12px; border-radius: 10px; font-weight: 600; font-size: 15px; color: var(--ink-2); }
+.more-pop a svg { width: 20px; height: 20px; color: var(--muted); flex: none; }
+.more-pop a:hover, .more-pop a:focus-visible { background: var(--base); outline: none; }
+.more-pop .hint { padding: 6px 10px 10px; }
+@media (prefers-reduced-motion: no-preference) { .more-pop { animation: morepop .14s ease-out; } @keyframes morepop { from { opacity: 0; transform: translateY(6px); } } }

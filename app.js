@@ -706,6 +706,7 @@
     users: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>'),
     order: svg('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>'),
     heat: svg('<path d="M12 3c2 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3 0-3-1-5 1-7.5z"/>'),
+    more: svg('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>', 2.2),
     chart: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
     scale: svg('<path d="M12 3v18M5 21h14M4 7h16M7 7l-3 7a3 3 0 0 0 6 0zM17 7l-3 7a3 3 0 0 0 6 0z"/>')
   };
@@ -753,42 +754,89 @@
     customers: ['#/customers', 'Customers', I.users], neworder: ['#/order/new', 'New order', I.order],
     logheat: ['#/breeding/new', 'Log heat', I.heat], compare: ['#/compare', 'VS.', I.scale],
     reports: ['#/reports', 'Reports', I.chart],
-    settings: ['#/settings', 'More', I.gear]
+    settings: ['#/settings', 'Settings', I.gear],
+    more: ['', 'More', I.more]
   };
   var NAV_DEFAULT = ['herd', 'breeding', 'bulls', 'sales', 'market', 'add'];
-  var NAV_ALL = NAV_DEFAULT.concat(['reports', 'customers', 'neworder', 'logheat', 'compare', 'settings']);
-  /** This device's bottom bar (chosen in Settings, saved per device name). */
-  function navOrder() {
-    var list = (S.prefs && Array.isArray(S.prefs.nav) ? S.prefs.nav : NAV_DEFAULT).filter(function (k) { return NAV_ITEMS[k]; });
-    if (!list.length) list = NAV_DEFAULT.slice();
+  var SIDE_DEFAULT = ['herd', 'breeding', 'bulls', 'sales', 'customers', 'market', 'reports', 'add', 'neworder', 'logheat'];
+  var NAV_ALL = ['herd', 'breeding', 'bulls', 'sales', 'market', 'add', 'reports', 'customers', 'neworder', 'logheat', 'compare', 'settings', 'more'];
+  var NAV_MAX = { bar: 6, side: NAV_ALL.length };
+  function isDesk() { return !!(window.matchMedia && matchMedia('(min-width: 1024px)').matches); }
+  function navLabel(k, kind) { return kind === 'side' && k === 'add' ? 'Add animal' : NAV_ITEMS[k][1]; }
+  /** This device's bottom bar ('bar') or computer left menu ('side'), chosen in Settings and saved per device name. */
+  /** Before v1.12, "More" on the bar was just a link to Settings (saved as 'settings'). Turn it into the real More. */
+  function migrateNavPrefs() {
+    if (!S.prefs || S.prefs.navV >= 2) return;
+    var n = Array.isArray(S.prefs.nav) ? S.prefs.nav.map(function (k) { return k === 'settings' ? 'more' : k; }) : S.prefs.nav;
+    S.prefs = Object.assign({}, S.prefs, { nav: n, navV: 2 });
+    if (S.token && typeof savePrefs === 'function') savePrefs(); else lsSet('herd.prefs', JSON.stringify(S.prefs));
+  }
+  function navOrder(kind) {
+    kind = kind || 'bar';
+    migrateNavPrefs();
+    var saved = S.prefs && Array.isArray(S.prefs[kind === 'side' ? 'side' : 'nav']) ? S.prefs[kind === 'side' ? 'side' : 'nav'] : null;
+    var list = (saved || (kind === 'side' ? SIDE_DEFAULT : NAV_DEFAULT)).filter(function (k, i, arr) { return NAV_ITEMS[k] && arr.indexOf(k) === i; });
+    if (!list.length) list = (kind === 'side' ? SIDE_DEFAULT : NAV_DEFAULT).slice();
     return list;
   }
-  function nav(active) {
-    var keys = navOrder();
-    // More is only added on its own when there'd be no way to reach Settings (its gear lives on the Herd page)
-    if (keys.indexOf('herd') < 0 && keys.indexOf('settings') < 0) keys = keys.concat(['settings']);
-    return '<nav class="nav" aria-label="Main" style="grid-template-columns:repeat(' + keys.length + ', minmax(0, 1fr))">' + keys.map(function (k) {
-      var it = NAV_ITEMS[k];
-      return '<a href="' + it[0] + '"' + (k === active ? ' class="on" aria-current="page"' : '') + '>' + it[2] + it[1] + '</a>';
-    }).join('') + '</nav>';
+  /** What the More pop-out lists: every page not already on the bar/menu, A→Z. */
+  function moreKeys(list, kind) {
+    return NAV_ALL.filter(function (k) { return k !== 'more' && list.indexOf(k) < 0 && !(kind === 'side' && k === 'settings'); })
+      .sort(function (a, b) { return navLabel(a, kind).localeCompare(navLabel(b, kind)); });
   }
-  /** Computer screens: a fixed menu down the left with every page (the bottom bar hides). */
-  var SIDE_GROUPS = [
-    ['', ['herd', 'breeding', 'bulls']],
-    ['Sales', ['sales', 'customers', 'market']],
-    ['Review', ['reports']],
-    ['Quick add', ['add', 'neworder', 'logheat']]
-  ];
+  function navLink(k, active, kind, list) {
+    var it = NAV_ITEMS[k];
+    if (k === 'more') {
+      var inMore = moreKeys(list, kind).indexOf(active) >= 0;
+      return '<button type="button" class="nav-more' + (inMore ? ' on' : '') + '" data-action="more-menu" data-kind="' + kind + '" aria-haspopup="true" aria-expanded="false">' + it[2] + it[1] + '</button>';
+    }
+    return '<a href="' + it[0] + '"' + (k === active ? ' class="on" aria-current="page"' : '') + '>' + it[2] + navLabel(k, kind) + '</a>';
+  }
+  function nav(active) {
+    var keys = navOrder('bar');
+    // With no Herd page (its gear opens Settings) and no Settings/More on the bar, add More so nothing is out of reach.
+    if (keys.indexOf('herd') < 0 && keys.indexOf('settings') < 0 && keys.indexOf('more') < 0) keys = keys.concat(['more']);
+    return '<nav class="nav" aria-label="Main" style="grid-template-columns:repeat(' + keys.length + ', minmax(0, 1fr))">' +
+      keys.map(function (k) { return navLink(k, active, 'bar', keys); }).join('') + '</nav>';
+  }
+  /** Computer screens: a fixed menu down the left (the bottom bar hides). Settings is always at the bottom. */
   function sideNav(active) {
+    var keys = navOrder('side').filter(function (k) { return k !== 'settings'; });
     return '<nav class="side-nav" aria-label="Main menu"><a class="side-brand" href="#/herd"><img src="brand/emblem-color.png" alt="">' +
-      '<span>Musgrove Farms</span></a>' + SIDE_GROUPS.map(function (g) {
-        return '<div class="side-group">' + (g[0] ? '<span class="side-label">' + g[0] + '</span>' : '') + g[1].map(function (k) {
-          var it = NAV_ITEMS[k];
-          var label = k === 'add' ? 'Add animal' : it[1];
-          return '<a href="' + it[0] + '"' + (k === active ? ' class="on" aria-current="page"' : '') + '>' + it[2] + label + '</a>';
-        }).join('') + '</div>';
-      }).join('') +
+      '<span>Musgrove Farms</span></a><div class="side-group">' +
+      keys.map(function (k) { return navLink(k, active, 'side', keys); }).join('') + '</div>' +
       '<div class="side-foot"><a href="#/settings"' + (active === 'settings' ? ' class="on" aria-current="page"' : '') + '>' + I.gear + 'Settings</a></div></nav>';
+  }
+  /** The More pop-out, anchored to the button that opened it. */
+  function openMoreMenu(btn) {
+    closeMoreMenu();
+    var kind = btn.dataset.kind;
+    var list = kind === 'side' ? navOrder('side').filter(function (k) { return k !== 'settings'; }) : navOrder('bar');
+    var keys = moreKeys(list, kind);
+    var box = document.createElement('div');
+    box.className = 'more-pop more-' + kind;
+    box.id = 'more-pop';
+    box.setAttribute('role', 'menu');
+    box.innerHTML = '<span class="more-title">More</span>' + (keys.length ? keys.map(function (k) {
+      var it = NAV_ITEMS[k];
+      return '<a role="menuitem" href="' + it[0] + '">' + it[2] + navLabel(k, kind) + '</a>';
+    }).join('') : '<span class="hint">Everything is already on your ' + (kind === 'side' ? 'menu' : 'bar') + '.</span>');
+    document.body.appendChild(box);
+    var r = btn.getBoundingClientRect();
+    if (kind === 'side') {
+      box.style.left = (r.right + 8) + 'px';
+      box.style.top = Math.max(8, Math.min(r.top - 8, window.innerHeight - box.offsetHeight - 8)) + 'px';
+    } else {
+      box.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+      box.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+    }
+    btn.setAttribute('aria-expanded', 'true');
+    var first = box.querySelector('a'); if (first) first.focus();
+  }
+  function closeMoreMenu() {
+    var box = document.getElementById('more-pop');
+    if (box) box.remove();
+    document.querySelectorAll('[data-action="more-menu"][aria-expanded="true"]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
   }
 
   function bannerHTML() {
@@ -2571,16 +2619,21 @@
       (S.lastError ? '<p class="form-err" style="margin:0">' + esc(S.lastError) + '</p>' : '');
   }
   function viewSettings() {
-    var order = navOrder();
-    var hidden = NAV_ALL.filter(function (k) { return order.indexOf(k) < 0; });
+    // On a computer the editor sets up the left menu; on a phone, the bottom bar.
+    var kind = isDesk() ? 'side' : 'bar';
+    var order = navOrder(kind).filter(function (k) { return !(kind === 'side' && k === 'settings'); });
+    var pool = NAV_ALL.filter(function (k) { return !(kind === 'side' && k === 'settings'); });
+    var hidden = pool.filter(function (k) { return order.indexOf(k) < 0; });
     var rows = order.concat(hidden).map(function (k, i) {
-      var on = order.indexOf(k) >= 0, it = NAV_ITEMS[k];
-      return '<div class="nav-row' + (on ? '' : ' off') + '"><label class="nav-check"><input type="checkbox" data-nav-toggle="' + k + '"' + (on ? ' checked' : '') +
-        (on && order.length <= 3 ? ' disabled' : '') + '><span class="nav-ico">' + it[2] + '</span>' + it[1] + '</label>' +
-        (on ? '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="-1" aria-label="Move ' + it[1] + ' earlier"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
-          '<button type="button" class="sq-btn" data-action="nav-move" data-k="' + k + '" data-d="1" aria-label="Move ' + it[1] + ' later"' + (i === order.length - 1 ? ' disabled' : '') + '>↓</button>' : '') + '</div>';
+      var on = order.indexOf(k) >= 0, it = NAV_ITEMS[k], label = navLabel(k, kind);
+      return '<div class="nav-row' + (on ? '' : ' off') + '"><label class="nav-check"><input type="checkbox" data-nav-toggle="' + k + '" data-kind="' + kind + '"' + (on ? ' checked' : '') +
+        (on && order.length <= 3 ? ' disabled' : '') + '><span class="nav-ico">' + it[2] + '</span>' + label +
+        (k === 'more' ? ' <span class="hint">· pop-out of everything else, A–Z</span>' : '') + '</label>' +
+        (on ? '<button type="button" class="sq-btn" data-action="nav-move" data-kind="' + kind + '" data-k="' + k + '" data-d="-1" aria-label="Move ' + label + ' earlier"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+          '<button type="button" class="sq-btn" data-action="nav-move" data-kind="' + kind + '" data-k="' + k + '" data-d="1" aria-label="Move ' + label + ' later"' + (i === order.length - 1 ? ' disabled' : '') + '>↓</button>' : '') + '</div>';
     }).join('');
-    var offBar = NAV_ALL.filter(function (k) { return k !== 'settings' && order.indexOf(k) < 0; });
+    var offBar = moreKeys(order, kind).filter(function (k) { return k !== 'settings'; });
+    var where = kind === 'side' ? 'menu' : 'bar';
     return '<div class="screen">' + backHeader('Settings', '#/herd') +
       '<div class="content">' +
       '<section class="card"><h2 class="sec-title">Sync</h2><div id="settings-sync">' + settingsSyncHTML() + '</div>' +
@@ -2600,10 +2653,12 @@
       '<p class="hint" style="margin:0;font-size:14px;line-height:1.5"><strong>iPhone:</strong> open in Safari → Share → Add to Home Screen.<br><strong>Android:</strong> open in Chrome → ⋮ menu → Add to Home screen (or Install app).</p></section>' +
       '<section class="card"><h2 class="sec-title">Sign out</h2><p class="hint" style="margin:0;font-size:14px;line-height:1.5">Signs this device out and clears its copy of the herd. The Google Sheet is not touched.</p>' +
       '<button type="button" class="btn btn-danger" data-action="sign-out">Sign out of this device</button></section>' +
-      '<section class="card"><h2 class="sec-title">Bottom bar on this device</h2>' +
-      '<p class="hint" style="margin:0;font-size:14px">Tick the pages and shortcuts you want and put them in order. Saved for this device name, so it comes back if you sign in again. More (this page) is optional — the gear on the Herd page always gets you here.</p>' +
+      '<section class="card"><h2 class="sec-title">' + (kind === 'side' ? 'Left menu on this computer' : 'Bottom bar on this device') + '</h2>' +
+      '<p class="hint" style="margin:0;font-size:14px">Tick the pages and shortcuts you want and put them in order' + (kind === 'bar' ? ' (up to 6)' : '') + '. <strong>More</strong> opens a pop-out with everything you didn’t tick, A–Z. ' +
+      (kind === 'side' ? 'Settings always sits at the bottom of the menu. The phone bottom bar is set up separately on the phone.' : 'The gear on the Herd page always opens Settings. On a computer, this list sets up the left menu instead.') +
+      ' Saved for this device name.</p>' +
       '<div class="nav-list">' + rows + '</div></section>' +
-      (offBar.length ? '<section class="card"><h2 class="sec-title">Pages not on the bar</h2><div class="btn-row wrap">' + offBar.map(function (k) {
+      (offBar.length ? '<section class="card"><h2 class="sec-title">Pages not on the ' + where + '</h2><div class="btn-row wrap">' + offBar.map(function (k) {
         return '<a class="btn btn-line btn-sm" href="' + NAV_ITEMS[k][0] + '">' + NAV_ITEMS[k][2] + NAV_ITEMS[k][1] + '</a>';
       }).join('') + '</div></section>' : '') +
       '<p class="updated">Herd Tracker ' + esc(VERSION) + '</p></div>' + nav('settings') + '</div>';
@@ -3271,11 +3326,18 @@
       render();
     },
     'print-report': function () { window.print(); },
+    'more-menu': function (el) {
+      if (document.getElementById('more-pop') && el.getAttribute('aria-expanded') === 'true') { closeMoreMenu(); return; }
+      openMoreMenu(el);
+    },
     'nav-move': function (el) {
-      var order = navOrder(), k = el.dataset.k, i = order.indexOf(k), j = i + parseInt(el.dataset.d, 10);
+      var kind = el.dataset.kind === 'side' ? 'side' : 'bar';
+      var order = navOrder(kind).filter(function (x) { return !(kind === 'side' && x === 'settings'); });
+      var k = el.dataset.k, i = order.indexOf(k), j = i + parseInt(el.dataset.d, 10);
       if (i < 0 || j < 0 || j >= order.length) return;
       order.splice(i, 1); order.splice(j, 0, k);
-      S.prefs = Object.assign({}, S.prefs, { nav: order });
+      var upd = {}; upd[kind === 'side' ? 'side' : 'nav'] = order;
+      S.prefs = Object.assign({}, S.prefs, upd);
       savePrefs(); render();
     },
     'revoke-device': function (el) {
@@ -3362,6 +3424,26 @@
   // ==========================================================================
   // Wiring
   // ==========================================================================
+  // More pop-out: closes on a tap elsewhere, a page change, Escape, or resizing.
+  document.addEventListener('click', function (e) {
+    var pop = document.getElementById('more-pop');
+    if (pop && !e.target.closest('#more-pop') && !e.target.closest('[data-action="more-menu"]')) closeMoreMenu();
+    if (pop && e.target.closest('#more-pop a')) setTimeout(closeMoreMenu, 0);
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && document.getElementById('more-pop')) {
+      var b = document.querySelector('[data-action="more-menu"][aria-expanded="true"]');
+      closeMoreMenu(); if (b) b.focus();
+    }
+  });
+  window.addEventListener('hashchange', closeMoreMenu);
+  window.addEventListener('resize', closeMoreMenu);
+  // Switching between phone and computer widths swaps which menu the Settings editor shows.
+  if (window.matchMedia) {
+    var deskMq = matchMedia('(min-width: 1024px)');
+    var onDeskChange = function () { if (!currentIsForm && S.token) render(); };
+    if (deskMq.addEventListener) deskMq.addEventListener('change', onDeskChange); else if (deskMq.addListener) deskMq.addListener(onDeskChange);
+  }
   document.addEventListener('click', function (e) {
     var el = e.target.closest('[data-action]');
     if (!el || el.disabled) return;
@@ -3400,12 +3482,15 @@
     var t = e.target;
     if (t.matches('input[type=file][data-photo-input]')) { handlePhoto(t); return; }
     if (t.matches('input[data-nav-toggle]')) {
-      var order = navOrder(), k = t.dataset.navToggle;
-      if (t.checked && order.length >= 6) { t.checked = false; toast('Up to 6 on the bar — untick one first'); return; }
+      var kind = t.dataset.kind === 'side' ? 'side' : 'bar';
+      var order = navOrder(kind).filter(function (x) { return !(kind === 'side' && x === 'settings'); }), k = t.dataset.navToggle;
+      var where = kind === 'side' ? 'menu' : 'bar';
+      if (t.checked && order.length >= NAV_MAX[kind]) { t.checked = false; toast('Up to ' + NAV_MAX[kind] + ' on the bar — untick one first'); return; }
       if (t.checked && order.indexOf(k) < 0) order.push(k);
       if (!t.checked) order = order.filter(function (x) { return x !== k; });
-      if (order.length < 3) { t.checked = true; toast('Keep at least 3 pages on the bar'); return; }
-      S.prefs = Object.assign({}, S.prefs, { nav: order });
+      if (order.length < 3) { t.checked = true; toast('Keep at least 3 pages on the ' + where); return; }
+      var upd = {}; upd[kind === 'side' ? 'side' : 'nav'] = order;
+      S.prefs = Object.assign({}, S.prefs, upd);
       savePrefs(); render();
       return;
     }
