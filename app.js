@@ -758,8 +758,8 @@
     more: ['', 'More', I.more]
   };
   var NAV_DEFAULT = ['herd', 'breeding', 'bulls', 'sales', 'market', 'add'];
-  var SIDE_DEFAULT = ['herd', 'breeding', 'bulls', 'sales', 'customers', 'market', 'reports', 'add', 'neworder', 'logheat'];
-  var NAV_ALL = ['herd', 'breeding', 'bulls', 'sales', 'market', 'add', 'reports', 'customers', 'neworder', 'logheat', 'compare', 'settings', 'more'];
+  var SIDE_DEFAULT = ['herd', 'breeding', 'bulls', 'sales', 'customers', 'market', 'reports', 'add', 'neworder'];
+  var NAV_ALL = ['herd', 'breeding', 'bulls', 'sales', 'market', 'add', 'reports', 'customers', 'neworder', 'compare', 'settings', 'more'];
   var NAV_MAX = { bar: 6, side: NAV_ALL.length };
   function isDesk() { return !!(window.matchMedia && matchMedia('(min-width: 1024px)').matches); }
   function navLabel(k, kind) { return kind === 'side' && k === 'add' ? 'Add animal' : NAV_ITEMS[k][1]; }
@@ -775,7 +775,7 @@
     kind = kind || 'bar';
     migrateNavPrefs();
     var saved = S.prefs && Array.isArray(S.prefs[kind === 'side' ? 'side' : 'nav']) ? S.prefs[kind === 'side' ? 'side' : 'nav'] : null;
-    var list = (saved || (kind === 'side' ? SIDE_DEFAULT : NAV_DEFAULT)).filter(function (k, i, arr) { return NAV_ITEMS[k] && arr.indexOf(k) === i; });
+    var list = (saved || (kind === 'side' ? SIDE_DEFAULT : NAV_DEFAULT)).filter(function (k, i, arr) { return NAV_ALL.indexOf(k) >= 0 && arr.indexOf(k) === i; });
     if (!list.length) list = (kind === 'side' ? SIDE_DEFAULT : NAV_DEFAULT).slice();
     return list;
   }
@@ -833,10 +833,25 @@
     btn.setAttribute('aria-expanded', 'true');
     var first = box.querySelector('a'); if (first) first.focus();
   }
+  /** A small pop-out (same look and closing rules as More) anchored under/over any button. */
+  function openPop(btn, html, cls) {
+    closeMoreMenu();
+    var box = document.createElement('div');
+    box.className = 'more-pop ' + (cls || '');
+    box.id = 'more-pop';
+    box.setAttribute('role', 'dialog');
+    box.innerHTML = html;
+    document.body.appendChild(box);
+    var r = btn.getBoundingClientRect(), h = box.offsetHeight, w = box.offsetWidth;
+    box.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) + 'px';
+    var below = r.bottom + 6;
+    box.style.top = (below + h > window.innerHeight - 90 && r.top - h - 6 > 8 ? r.top - h - 6 : Math.min(below, window.innerHeight - h - 8)) + 'px';
+    btn.setAttribute('aria-expanded', 'true');
+  }
   function closeMoreMenu() {
     var box = document.getElementById('more-pop');
     if (box) box.remove();
-    document.querySelectorAll('[data-action="more-menu"][aria-expanded="true"]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+    document.querySelectorAll('[data-action="more-menu"][aria-expanded="true"], [data-action="invoice-menu"][aria-expanded="true"]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
   }
 
   function bannerHTML() {
@@ -1718,6 +1733,28 @@
     if (sug) parts.push('<span class="pay">Balance ≈ ' + money(Math.max(0, sug.total - (depositPaid(o) ? num(o.deposit_amount) : 0))) + '</span>');
     return parts.join('');
   }
+  /** Which invoices exist for an order (deposit once it's paid; paid-in-full once the final payment is in). */
+  function invoiceKinds(o) {
+    var k = [];
+    if (depositPaid(o)) k.push('deposit');
+    if (o.final_paid_date) k.push('final');
+    return k;
+  }
+  function invoiceBtn(o, cls) {
+    return invoiceKinds(o).length ? '<button type="button" class="btn btn-line btn-sm ' + (cls || '') + '" data-action="invoice-menu" data-id="' + esc(o.id) + '" aria-haspopup="true" aria-expanded="false">🧾 Invoice</button>' : '';
+  }
+  function invoiceMenuHTML(o) {
+    var canEmail = !!invSetting('invoice_email');
+    return '<span class="more-title">Invoices · ' + esc(orderNoText(o)) + '</span>' + invoiceKinds(o).map(function (k) {
+      var sent = String(k === 'deposit' ? o.deposit_invoice_sent || '' : o.invoice_sent || '');
+      return '<div class="inv-pop-row"><div><b>' + (k === 'deposit' ? 'Deposit invoice' : 'Paid-in-full invoice') + '</b><span class="hint">' +
+        (/^Failed/.test(sent) ? 'Last email failed' : sent ? 'Emailed ' + esc(relTime(sent)) : 'Not emailed yet') + '</span></div>' +
+        '<div class="btn-row"><button type="button" class="btn btn-line btn-sm" data-action="invoice-view" data-kind="' + k + '" data-id="' + esc(o.id) + '" data-label="View PDF">View PDF</button>' +
+        (canEmail ? '<button type="button" class="btn btn-dark btn-sm" data-action="invoice-send" data-kind="' + k + '" data-id="' + esc(o.id) + '" data-label="Email it">Email it</button>' : '') + '</div></div>';
+    }).join('') + (canEmail ? '<span class="hint" style="padding:4px 10px 6px">Emails go to ' + esc(invSetting('invoice_email')) + '.</span>'
+      : '<span class="hint" style="padding:4px 10px 6px">Add an invoice email in Settings → Invoices to email them.</span>');
+  }
+
   function orderCard(o, pos) {
     var s = stage(o);
     var a = byId('Animals', o.assigned_animal_id);
@@ -1734,7 +1771,7 @@
       (a ? '<span class="assigned-line">' + earTag(a.tag, 'sm') + '<span>' + esc(tagName(a)) + (a.hanging_weight ? ' · ' + lbs(a.hanging_weight) + ' hanging' : '') + '</span>' +
         (s === 'Assigned' ? '<button type="button" class="link-inline" data-action="order-unassign" data-id="' + esc(o.id) + '">Unassign</button>' : '') + '</span>' : '') +
       '<div class="pay-line">' + payLine(o) + '</div>' +
-      '<div class="btn-row" style="align-items:center">' + contactBtns(o) + action + '</div></article>';
+      '<div class="btn-row" style="align-items:center">' + contactBtns(o) + invoiceBtn(o) + action + '</div></article>';
   }
 
   function viewSales() {
@@ -1854,9 +1891,9 @@
       '<div class="btn-row"><a class="btn btn-accent btn-sm" href="#/order/new?product=Beef&cust=' + encodeURIComponent(key) + '">' + I.plus + 'Beef order</a>' +
       '<a class="btn btn-dark btn-sm" href="#/order/new?product=Pork&cust=' + encodeURIComponent(key) + '">' + I.plus + 'Pork order</a></div></section>' +
       '<h2 class="section-title">Orders</h2><div class="list">' + orders.map(function (o) {
-        return '<a class="row" href="#/order/' + esc(o.id) + '"><span class="row-main"><span class="row-title">' + esc(product(o)) + ' · ' + esc(shareLabel(o)) + '</span>' +
-          '<span class="row-sub">Requested ' + esc(fmtDate(requestDate(o), true)) + ' · ' + esc(stage(o) === 'Complete' ? 'paid ' + fmtDate(o.final_paid_date, true) : stage(o).toLowerCase()) + '</span></span>' +
-          '<span class="pr-val"><b>' + (paidTotal(o) ? money(paidTotal(o)) : '—') + '</b></span></a>';
+        return '<div class="cust-ord"><a class="row" href="#/order/' + esc(o.id) + '"><span class="row-main"><span class="row-title">' + esc(product(o)) + ' · ' + esc(shareLabel(o)) + '</span>' +
+          '<span class="row-sub">' + (o.order_no ? 'Order ' + esc(o.order_no) + ' · ' : '') + 'Requested ' + esc(fmtDate(requestDate(o), true)) + ' · ' + esc(stage(o) === 'Complete' ? 'paid ' + fmtDate(o.final_paid_date, true) : stage(o).toLowerCase()) + '</span></span>' +
+          '<span class="pr-val"><b>' + (paidTotal(o) ? money(paidTotal(o)) : '—') + '</b></span></a>' + invoiceBtn(o, 'cust-inv') + '</div>';
       }).join('') + '</div>' +
       (isAdmin() ? '<button type="button" class="btn btn-danger btn-block" data-action="delete-customer" data-key="' + esc(key) + '">Delete this customer</button>' : '') +
       '</div>' + nav('sales') + '</div>';
@@ -1903,6 +1940,10 @@
     return '<div class="screen">' + formHeader(id ? 'Edit ' + prod.toLowerCase() + ' order' : 'New ' + prod.toLowerCase() + ' order', 'f-order', '#/sales') +
       '<form id="f-order" class="form" data-form="order" data-id="' + esc(id || '') + '" novalidate>' +
       '<input type="hidden" name="product" value="' + prod + '">' +
+      (!id ? '<div class="seg-light prod-pick" role="group" aria-label="Beef or pork">' + ['Beef', 'Pork'].map(function (pv) {
+        return '<a href="#/order/new?product=' + pv + (q.cust ? '&cust=' + encodeURIComponent(q.cust) : '') + '" class="' + (pv === prod ? 'on' : '') + '" aria-pressed="' + (pv === prod) + '">' +
+          (pv === 'Beef' ? '🐄 Beef' : '🐖 Pork') + '</a>';
+      }).join('') + '</div>' : '') +
       (id ? '<p class="order-no">' + esc(orderNoText(o)) + '</p>' : '') +
       (id && s !== 'Waiting' ? '<div class="info">' + I.info + '<span>' + esc(s === 'Complete' ? 'Paid in full — in the archive.' : s === 'Cancelled' ? 'This order was cancelled.' : 'Assigned to an animal.') + '</span></div>' : '') +
       '<section class="field" style="gap:12px"><h2 class="sec-title">Customer</h2>' +
@@ -1996,7 +2037,7 @@
       !(/\bbull/i.test(it.cls || '') && !/\bcows?\b/i.test(it.cls || ''));
     return true;
   }
-  var DAIRY_RE = /\b(dairy|holsteins?|jerseys?|springers?|fresh cows?|hol)\b/i;
+  var DAIRY_RE = /\b(dairy|holsteins?|jerseys?|springers?|fresh cows?|hol|organic)\b/i;   // listings we don't show (dairy + organic)
   function priceItems(rec) {
     try {
       var a = JSON.parse(rec.lines_json || '[]');
@@ -2093,7 +2134,6 @@
         (age.text ? '<span class="pill ' + age.cls + '">' + esc(age.text) + '</span>' : '') + '<span class="yard-chev">' + I.chev + '</span></summary>' +
         '<div class="yard-body">' +
         (items.length ? priceRows(items, prevMap) : '<p class="hint" style="margin:0">No prices listed for this sale.</p>') +
-        (rec.notes_text && UI.market === 'all' ? '<p class="market-note">' + esc(rec.notes_text) + '</p>' : '') +
         (older ? '<span class="hint">Earlier sales</span>' + older : '') +
         '<a class="src" href="' + esc(rec.source_url) + '" target="_blank" rel="noopener">' + I.link + 'From ' + esc(rec.source || 'source') + '</a>' +
         '</div></details>';
@@ -2770,7 +2810,7 @@
     var pr = parseRoute();
     var r = route(pr);
     var SIDE_OF = { animal: 'herd', photo: 'herd', add: 'add', order: pr.p[1] === 'new' ? 'neworder' : 'sales', customer: 'customers', period: 'breeding', compare: 'market' };
-    var side = SIDE_OF[pr.p[0]] || (pr.p[0] === 'breeding' && pr.p[1] === 'new' ? 'logheat' : pr.p[0] || 'herd');
+    var side = SIDE_OF[pr.p[0]] || pr.p[0] || 'herd';
     r.html += sideNav(side);
     if (fresh && /#lineage$/.test(key)) setTimeout(function () { var l = document.getElementById('lineage'); if (l) l.scrollIntoView({ block: 'start' }); }, 30);
     currentIsForm = !!r.form;
@@ -3268,6 +3308,11 @@
       if (!o || !confirm('Cancel the order for ' + fullName(o) + '? It moves to the archive (you can reopen it).')) return;
       commit([{ table: 'Orders', op: 'upsert', row: { id: o.id, status: 'Cancelled', assigned_animal_id: '' } }], { go: '#/sales', msg: 'Order cancelled' });
     },
+    'invoice-menu': function (el) {
+      if (el.getAttribute('aria-expanded') === 'true') { closeMoreMenu(); return; }
+      var o = byId('Orders', el.dataset.id);
+      if (o) openPop(el, invoiceMenuHTML(o), 'inv-pop');
+    },
     'invoice-view': function (el) {
       if (S.queue.length) { toast('Waiting to sync first — try again in a moment'); trySync(); return; }
       el.disabled = true; el.textContent = 'Making PDF…';
@@ -3277,15 +3322,15 @@
         var a = document.createElement('a'); a.href = url; a.download = r.filename || 'invoice.pdf'; a.target = '_blank';
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-        el.disabled = false; el.textContent = 'View PDF';
-      }).catch(function (e) { el.disabled = false; el.textContent = 'View PDF'; toast('Couldn’t make the invoice: ' + (e.message || e)); });
+        el.disabled = false; el.textContent = el.dataset.label || 'View PDF';
+      }).catch(function (e) { el.disabled = false; el.textContent = el.dataset.label || 'View PDF'; toast('Couldn’t make the invoice: ' + (e.message || e)); });
     },
     'invoice-send': function (el) {
       if (S.queue.length) { toast('Waiting to sync first — try again in a moment'); trySync(); return; }
       el.disabled = true; el.textContent = 'Sending…';
       api('invoice', { id: el.dataset.id, kind: el.dataset.kind, send: true }).then(function (r) {
         toast('🧾 ' + r.result); el.textContent = 'Sent'; trySync();
-      }).catch(function (e) { el.disabled = false; el.textContent = 'Email again'; toast('Couldn’t send: ' + (e.message || e)); });
+      }).catch(function (e) { el.disabled = false; el.textContent = el.dataset.label || 'Email again'; toast('Couldn’t send: ' + (e.message || e)); });
     },
     'order-reopen': function (el) {
       commit([{ table: 'Orders', op: 'upsert', row: { id: el.dataset.id, status: 'Waiting', final_paid_date: '' } }], { go: '#/sales', msg: 'Back on the waitlist' });
@@ -3433,7 +3478,7 @@
   // More pop-out: closes on a tap elsewhere, a page change, Escape, or resizing.
   document.addEventListener('click', function (e) {
     var pop = document.getElementById('more-pop');
-    if (pop && !e.target.closest('#more-pop') && !e.target.closest('[data-action="more-menu"]')) closeMoreMenu();
+    if (pop && !e.target.closest('#more-pop') && !e.target.closest('[data-action="more-menu"], [data-action="invoice-menu"]')) closeMoreMenu();
     if (pop && e.target.closest('#more-pop a')) setTimeout(closeMoreMenu, 0);
   }, true);
   document.addEventListener('keydown', function (e) {
@@ -3444,6 +3489,7 @@
   });
   window.addEventListener('hashchange', closeMoreMenu);
   window.addEventListener('resize', closeMoreMenu);
+  window.addEventListener('scroll', closeMoreMenu, { passive: true });
   // Switching between phone and computer widths swaps which menu the Settings editor shows.
   if (window.matchMedia) {
     var deskMq = matchMedia('(min-width: 1024px)');
