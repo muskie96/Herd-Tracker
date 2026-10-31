@@ -48,7 +48,7 @@
   };
   // Letterhead + where invoices go (admin only; saved in the Settings tab too)
   var INVOICE_KEYS = ['farm_name', 'farm_address', 'farm_phone', 'venmo', 'invoice_email', 'invoice_auto'];
-  var INVOICE_DEFAULTS = { farm_name: 'Musgrove Farms', farm_address: '164 Summit Butte Rd\nWoodland, WA 98674', farm_phone: '(360) 430-2145' };
+  var INVOICE_DEFAULTS = { farm_name: 'Musgrove Farms', farm_address: '164 Summit Butte Rd\nWoodland, WA 98674', farm_phone: '(360) 430-2145', venmo: 'Benjamin-Musgrove' };
   function invSetting(k) { var r = byId('Settings', k); return r && r.value !== '' ? r.value : (INVOICE_DEFAULTS[k] || ''); }
   function orderNoText(o) { return o.order_no ? 'Order ' + o.order_no : 'Order # after sync'; }
 
