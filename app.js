@@ -2667,21 +2667,23 @@
     var email = invSetting('invoice_email'), auto = invSetting('invoice_auto') !== 'no';
     if (!isAdmin()) {
       return '<section class="card"><h2 class="sec-title">Invoices</h2><p class="hint" style="margin:0;font-size:14px">' +
-        (email && auto ? 'When an order is paid in full, a PDF invoice is emailed to ' + esc(email) + '.' : 'Invoice emails are off.') + ' The admin sets this up.</p></section>';
+        (email && auto ? 'Two PDF invoices are emailed to ' + esc(email) + ' for each order: a <strong>deposit invoice</strong> (with the balance estimate and Venmo) when the deposit is paid, and a <strong>paid-in-full invoice</strong> when the final payment is in.' : 'Invoice emails are off.') + ' The admin sets this up.</p></section>';
     }
     var t = function (k, label, ph, type) {
       return '<label class="field"><span class="lbl">' + label + '</span><input class="inp" name="' + k + '"' + (type ? ' type="' + type + '"' : '') +
         ' value="' + esc(invSetting(k)) + '" placeholder="' + ph + '" autocomplete="off"></label>';
     };
     return '<form class="card" data-form="invoice-settings" novalidate><h2 class="sec-title">Invoices</h2>' +
-      '<p class="hint" style="margin:0;font-size:14px">When an order is marked paid in full, a one-page PDF invoice (with this letterhead) is emailed to the address below.</p>' +
-      '<label class="nav-check"><input type="checkbox" name="invoice_auto" value="yes"' + (auto ? ' checked' : '') + '>Email an invoice when an order is paid in full</label>' +
+      '<p class="hint" style="margin:0;font-size:14px;line-height:1.5">Each order gets two one-page PDF invoices with this letterhead, emailed to the address below:<br>' +
+      '<strong>1. Deposit invoice</strong> — sent when the deposit is marked paid. Shows the harvest date, the remaining balance (or an estimate by hanging weight) and how to pay by Venmo.<br>' +
+      '<strong>2. Paid-in-full invoice</strong> — sent when the final payment is marked paid.</p>' +
+      '<label class="nav-check"><input type="checkbox" name="invoice_auto" value="yes"' + (auto ? ' checked' : '') + '>Email both invoices automatically</label>' +
       t('invoice_email', 'Send invoices to', 'you@example.com', 'email') +
       t('farm_name', 'Farm name on the invoice', 'Musgrove Farms') +
       '<label class="field"><span class="lbl">Address</span><textarea class="inp" name="farm_address" rows="2" placeholder="Street&#10;Town, WA 98629">' + esc(invSetting('farm_address')) + '</textarea></label>' +
       t('farm_phone', 'Phone', '(360) 555-0100', 'tel') +
       '<label class="field"><span class="lbl">Venmo (for getting paid)</span><span class="money-inp"><span aria-hidden="true">@</span><input class="inp" name="venmo" value="' + esc(invSetting('venmo')) + '" placeholder="Musgrove-Farms" autocomplete="off" autocapitalize="off" spellcheck="false"></span>' +
-      '<span class="hint">Printed on both invoices. Deposit invoices get a Venmo QR code for the remaining balance.</span></label>' +
+      '<span class="hint">Shown on both invoices. The deposit invoice gets a Pay with Venmo box and QR code for the remaining balance; the paid-in-full invoice mentions it for next time.</span></label>' +
       '<p class="form-err" role="alert"></p><button type="submit" class="btn btn-line">Save invoice settings</button></form>';
   }
   function devicesHTML(list) {
