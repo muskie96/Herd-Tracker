@@ -47,7 +47,7 @@
     hanging_pct: '60', burger_pct: '70'
   };
   // Letterhead + where invoices go (admin only; saved in the Settings tab too)
-  var INVOICE_KEYS = ['farm_name', 'farm_address', 'farm_phone', 'invoice_email', 'invoice_auto'];
+  var INVOICE_KEYS = ['farm_name', 'farm_address', 'farm_phone', 'venmo', 'invoice_email', 'invoice_auto'];
   var INVOICE_DEFAULTS = { farm_name: 'Musgrove Farms', farm_address: '164 Summit Butte Rd\nWoodland, WA 98674', farm_phone: '(360) 430-2145' };
   function invSetting(k) { var r = byId('Settings', k); return r && r.value !== '' ? r.value : (INVOICE_DEFAULTS[k] || ''); }
   function orderNoText(o) { return o.order_no ? 'Order ' + o.order_no : 'Order # after sync'; }
@@ -2680,6 +2680,8 @@
       t('farm_name', 'Farm name on the invoice', 'Musgrove Farms') +
       '<label class="field"><span class="lbl">Address</span><textarea class="inp" name="farm_address" rows="2" placeholder="Street&#10;Town, WA 98629">' + esc(invSetting('farm_address')) + '</textarea></label>' +
       t('farm_phone', 'Phone', '(360) 555-0100', 'tel') +
+      '<label class="field"><span class="lbl">Venmo (for getting paid)</span><span class="money-inp"><span aria-hidden="true">@</span><input class="inp" name="venmo" value="' + esc(invSetting('venmo')) + '" placeholder="Musgrove-Farms" autocomplete="off" autocapitalize="off" spellcheck="false"></span>' +
+      '<span class="hint">Printed on both invoices. Deposit invoices get a Venmo QR code for the remaining balance.</span></label>' +
       '<p class="form-err" role="alert"></p><button type="submit" class="btn btn-line">Save invoice settings</button></form>';
   }
   function devicesHTML(list) {
@@ -3140,6 +3142,8 @@
     'invoice-settings': function (form) {
       var f = fields(form);
       f.invoice_auto = f.invoice_auto === 'yes' ? 'yes' : 'no';
+      f.venmo = String(f.venmo || '').replace(/^.*venmo\.com\/(u\/)?/i, '').replace(/^@+/, '').replace(/[?#].*$/, '').trim();
+      if (f.venmo && !/^[A-Za-z0-9_-]{2,30}$/.test(f.venmo)) return formError(form, 'A Venmo username is letters, numbers, dashes or underscores — no spaces.');
       if (f.invoice_email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.invoice_email)) return formError(form, 'That email address doesn’t look right.');
       if (f.invoice_auto === 'yes' && !f.invoice_email) return formError(form, 'Add the email address invoices should go to.');
       var changes = INVOICE_KEYS.filter(function (k) {

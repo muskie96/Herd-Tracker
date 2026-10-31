@@ -1,7 +1,7 @@
 /* Herd Tracker service worker: lets the app open with no signal.
    App files: try the network first (so updates show up), fall back to the saved copy.
    Bump VERSION when you change the list of files below. */
-var VERSION = 'herd-v20';
+var VERSION = 'herd-v21';
 var FONTS = 'herd-fonts';
 var SHELL = [
   './', './index.html', './app.css', './app.js', './config.js', './manifest.webmanifest',
