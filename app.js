@@ -484,6 +484,9 @@
   function isOffsite(a) { return !!a && a.offsite === 'yes' && !isBull(a); }
   function isActive(a) { return ACTIVE.indexOf(st(a)) >= 0; }
   function isBull(a) { return a && a.sex === 'Bull'; }
+  /** Animals someone should go back and check — for now, calves whose sex wasn't known when they were entered. */
+  function needsCheck(a) { return a.sex === 'Calf' && a.calf_sex === 'Unknown' && isActive(a) && !isBull(a); }
+  function checkReason(a) { return a.sex === 'Calf' && a.calf_sex === 'Unknown' ? 'Calf’s sex not checked yet' : ''; }
   function isFemale(a) { return a.sex === 'Cow' || a.sex === 'Heifer' || (a.sex === 'Calf' && a.calf_sex === 'Heifer'); }
   function canBreed(a) { return (a.sex === 'Cow' || a.sex === 'Heifer') && !isOffsite(a); }
   function origin(a) { return a.origin === 'Purchased' || a.origin === 'Leased' || isBull(a) ? 'Purchased' : 'Born on farm'; }
@@ -497,7 +500,7 @@
     return a.tag || a.name || 'No tag (' + (a.sex === 'Calf' ? 'calf' : (a.sex || 'animal').toLowerCase()) + (a.birth_date ? ', born ' + fmtDate(a.birth_date) : '') + ')';
   }
   function sexText(a) {
-    if (a.sex === 'Calf') return a.calf_sex ? a.calf_sex + ' calf' : 'Calf';
+    if (a.sex === 'Calf') return a.calf_sex === 'Unknown' ? 'Calf (sex ?)' : a.calf_sex ? a.calf_sex + ' calf' : 'Calf';
     return a.sex || '—';
   }
   function byTag(x, y) {
@@ -744,7 +747,8 @@
     return '<a class="row" href="#/animal/' + esc(a.id) + '"><span class="thumb solo"><span class="ph"' + (a.photo_id ? ' data-photo="' + esc(a.photo_id) + '"' : '') + '>' +
       I.camera + '</span></span>' +
       '<span class="row-main"><span class="row-title">' + esc(dispName(a)) + '</span>' +
-      '<span class="row-sub">' + esc(animalSub(a)) + '</span>' + (mark && !info.emoji ? '<span class="row-sub">' + mark + '</span>' : '') + '</span>' +
+      '<span class="row-sub">' + esc(animalSub(a)) + '</span>' + (mark && !info.emoji ? '<span class="row-sub">' + mark + '</span>' : '') +
+      (needsCheck(a) ? '<span class="check-flag"><span class="q">?</span>Check sex</span>' : '') + '</span>' +
       '<span class="row-end">' + (info.emoji && s !== 'In herd' ? mark : '') + earTag(a.tag, 'md') + '</span></a>';
   }
 
@@ -937,10 +941,11 @@
   // offsite purchases and past animals behind their own chips)
   // ==========================================================================
   var HERD_TILES = [['In herd', '🐄', 'In herd'], ['Ready steak', '🥩', 'Ready for steak'], ['Ready burger', '🍔', 'Ready for burger']];
-  var HERD_CHIPS = ['All', 'Cows', 'Heifers', 'Steers', 'Calves', 'Offsite', 'Past'];
+  var HERD_CHIPS = ['All', 'Check', 'Cows', 'Heifers', 'Steers', 'Calves', 'Offsite', 'Past'];
   /** Only offer the filters that match something in the herd right now. */
   function chipCount(c) {
     if (c === 'Offsite') return offsiteAnimals().length;
+    if (c === 'Check') return cattle().filter(needsCheck).length;
     if (c === 'Past') return cattle().filter(function (a) { return PAST.indexOf(st(a)) >= 0; }).length;
     var pool = cattle().filter(isActive);
     if (UI.status && UI.sex !== 'Offsite' && UI.sex !== 'Past') pool = pool.filter(function (a) { return st(a) === UI.status; });
@@ -949,11 +954,12 @@
   function herdPool() {
     if (UI.sex === 'Offsite') return offsiteAnimals();
     if (UI.sex === 'Past') return cattle().filter(function (a) { return PAST.indexOf(st(a)) >= 0; });
+    if (UI.sex === 'Check') return cattle().filter(needsCheck);
     var all = cattle().filter(isActive);
     return UI.status ? all.filter(function (a) { return st(a) === UI.status; }) : all;
   }
   function sexMatch(a, chip) {
-    if (chip === 'All' || chip === 'Offsite' || chip === 'Past') return true;
+    if (chip === 'All' || chip === 'Offsite' || chip === 'Past' || chip === 'Check') return true;
     return a.sex === { Cows: 'Cow', Heifers: 'Heifer', Steers: 'Steer', Calves: 'Calf' }[chip];
   }
   function herdListHTML() {
@@ -967,7 +973,7 @@
         '<a class="btn btn-accent" href="#/add">' + I.plus + 'Add an animal</a></div>';
     }
     if (!list.length) {
-      return '<div class="empty"><b>' + (UI.sex === 'Offsite' ? 'No offsite purchases' : UI.sex === 'Past' ? 'No past animals yet' : 'No matches') + '</b>' +
+      return '<div class="empty"><b>' + (UI.sex === 'Offsite' ? 'No offsite purchases' : UI.sex === 'Past' ? 'No past animals yet' : UI.sex === 'Check' ? 'All caught up' : 'No matches') + '</b>' +
         (UI.sex === 'Offsite' ? 'Animals bought to go straight to the butcher show up here.' : 'Try a different search or filter.') + '</div>';
     }
     return list.map(animalRow).join('');
@@ -975,11 +981,13 @@
   function viewHerd() {
     var all = cattle();
     var count = function (k) { return all.filter(function (a) { return st(a) === k; }).length; };
+    if (UI.sex === 'Check' && !chipCount('Check')) UI.sex = 'All';   // all caught up
     var chips = HERD_CHIPS.filter(function (c) { return c === 'All' || c === UI.sex || chipCount(c) > 0; });
     if (chips.indexOf(UI.sex) < 0) UI.sex = 'All';
-    var special = UI.sex === 'Offsite' || UI.sex === 'Past';
+    var special = UI.sex === 'Offsite' || UI.sex === 'Past' || UI.sex === 'Check';
     var note = UI.sex === 'Offsite' ? 'Bought offsite to go straight to the butcher — not part of the herd'
       : UI.sex === 'Past' ? 'Harvested, sold and deceased'
+      : UI.sex === 'Check' ? 'Need a second look — open one and tap Edit to fill in what’s missing'
       : UI.status ? 'Showing ' + statusLabel(UI.status).replace(/^\S+ /, '').toLowerCase() + ' · tap the box again to show everyone' : '';
     return '<div class="screen">' +
       '<header class="hdr home-hdr"><div class="hdr-row brand-row"><img class="emblem" src="brand/emblem-color.png" alt="Musgrove Farms" width="98" height="70">' +
@@ -995,8 +1003,8 @@
       '<label class="search">' + I.search + '<input id="herd-search" type="search" placeholder="Search tag, old tag, name or breed" aria-label="Search herd" value="' + esc(UI.search) + '"></label>' +
       (chips.length > 1 ? '<div class="chips" role="group" aria-label="Filter">' + chips.map(function (c) {
         var n = c === 'All' ? (special ? '' : herdPool().length) : chipCount(c);
-        return '<button type="button" class="chip' + (UI.sex === c ? ' on' : '') + (c === 'Offsite' || c === 'Past' ? ' chip-alt' : '') +
-          '" data-action="sex-filter" data-v="' + c + '">' + c + (n !== '' ? ' <span class="chip-n">' + n + '</span>' : '') + '</button>';
+        return '<button type="button" class="chip' + (UI.sex === c ? ' on' : '') + (c === 'Offsite' || c === 'Past' ? ' chip-alt' : '') + (c === 'Check' ? ' chip-check' : '') +
+          '" data-action="sex-filter" data-v="' + c + '">' + (c === 'Check' ? '❓ Check' : c) + (n !== '' ? ' <span class="chip-n">' + n + '</span>' : '') + '</button>';
       }).join('') + '</div>' : '') +
       (note ? '<span class="list-note">' + esc(note) + '</span>' : '') +
       '<div class="list" id="herd-list">' + herdListHTML() + '</div></div>' + nav('herd') + '</div>';
@@ -1030,6 +1038,7 @@
       '<span class="meta">' + esc((bull ? [a.breed, 'Bull'] : [a.breed, sexText(a), ageText(a.birth_date)]).filter(Boolean).join(' · ')) + '</span></div></div>' +
       '<div id="sync-banner">' + bannerHTML() + '</div>' +
       '<div class="content" style="padding-top:20px">' +
+      (checkReason(a) && isActive(a) ? '<a class="check-flag big" href="#/animal/' + esc(a.id) + '/edit"><span class="q">?</span><span><strong>' + esc(checkReason(a)) + '.</strong> Tap to set heifer or bull once you know.</span></a>' : '') +
       (offsite ? '<div class="info">' + I.info + '<span><strong>Offsite purchase.</strong> Bought to go straight to the butcher — not counted in the herd, but you can assign it to waitlist orders.</span></div>' : '') +
 
       (bull ? '<div class="info">' + I.bull + '<span><strong>' + esc(statusLabel(st(a), a)) + '.</strong> ' +
@@ -1284,7 +1293,7 @@
     } else {
       html += '<fieldset class="field"><legend class="lbl">Sex</legend><div class="opts">' + opts('sex', SEXES, a.sex) + '</div></fieldset>' +
         '<fieldset class="field" data-show-when="sex:Calf"><legend class="lbl">Calf is a…</legend><div class="opts">' +
-        opts('calf_sex', ['Heifer', 'Bull'], a.calf_sex || 'Heifer', ['Heifer calf', 'Bull calf']) + '</div></fieldset>' +
+        opts('calf_sex', ['Heifer', 'Bull', 'Unknown'], a.calf_sex || 'Heifer', ['Heifer calf', 'Bull calf', '❓ Not sure']) + '</div></fieldset>' +
         '<label class="field"><span class="lbl">Birth date</span><input class="inp" type="date" name="birth_date" value="' + esc(a.birth_date) + '" max="' + today() + '">' +
         '<span class="hint" id="age-hint"></span></label>' +
         '<fieldset class="field"><legend class="lbl">Origin</legend><div class="opts">' + opts('origin', ORIGINS, origin(a)) + '</div></fieldset>' +
@@ -1512,7 +1521,7 @@
       (isExposure(b) ? 'in together ' + esc(fmtDate(b.exposure_start, true)) + (b.exposure_end ? ' – ' + esc(fmtDate(b.exposure_end, true)) : '') : 'bred ' + esc(fmtDate(b.bred_date, true))) + '</span></div>' +
       '<label class="field"><span class="lbl">Calving date *</span><input class="inp" type="date" name="calving_date" value="' + today() + '" max="' + today() + '" required></label>' +
       '<fieldset class="field"><legend class="lbl">Calf</legend><div class="opts">' + opts('alive', ['yes', 'no'], 'yes', ['Born alive', 'Stillborn']) + '</div></fieldset>' +
-      '<fieldset class="field"><legend class="lbl">Calf is a…</legend><div class="opts">' + opts('calf_sex', ['Heifer', 'Bull'], 'Heifer', ['Heifer calf', 'Bull calf']) + '</div></fieldset>' +
+      '<fieldset class="field"><legend class="lbl">Calf is a…</legend><div class="opts">' + opts('calf_sex', ['Heifer', 'Bull', 'Unknown'], 'Heifer', ['Heifer calf', 'Bull calf', '❓ Not sure']) + '</div></fieldset>' +
       '<div class="grid-2"><label class="field"><span class="lbl">Ear tag</span><input class="inp tag-inp" name="tag" autocomplete="off" autocapitalize="characters" placeholder="None yet"></label>' +
       '<label class="field"><span class="lbl">Name (optional)</span><input class="inp" name="name"></label></div>' +
       breedPicker(breed) +

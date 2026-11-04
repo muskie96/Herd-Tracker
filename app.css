@@ -710,3 +710,10 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .prod-pick { margin-bottom: 4px; }
 .b-card > .btn-row { flex-wrap: wrap; }
 .b-card > .btn-row > .btn[style*="flex:1"] { min-width: 150px; }
+/* v1.15 "needs a second look" flag (e.g. calf sex unknown) */
+.check-flag { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 3px 9px 3px 4px; border-radius: 999px; background: #FDEBC8; color: #6B3F00; border: 1px solid #E3B25A; font-size: 12px; font-weight: 700; }
+.check-flag .q { width: 18px; height: 18px; border-radius: 50%; background: #B4560B; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; flex: none; }
+.check-flag.big { align-self: stretch; margin: 0; padding: 12px 14px; border-radius: 12px; gap: 12px; font-size: 14px; font-weight: 500; line-height: 1.4; }
+.check-flag.big .q { width: 28px; height: 28px; font-size: 16px; }
+.chip.chip-check { border-color: #E3B25A; background: #FDEBC8; color: #6B3F00; }
+.chip.chip-check.on { background: #B4560B; border-color: #B4560B; color: #fff; }
